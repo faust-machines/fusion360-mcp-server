@@ -2041,6 +2041,39 @@ TOOLS: list[dict] = [
             "properties": {},
         },
     },
+    # ── design type safety ──────────────────────────────────────────────
+    {
+        "name": "get_design_type",
+        "title": "Get Design Type",
+        "description": (
+            "Check if the design is in parametric or direct mode. "
+            "Use this to detect accidental mode switches."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "set_design_type",
+        "title": "Set Design Type",
+        "description": (
+            "Switch design type between 'parametric' and 'direct'. "
+            "Use 'parametric' to recover from accidental direct-mode "
+            "switches (equivalent to Capture Design History in the UI)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["design_type"],
+            "properties": {
+                "design_type": {
+                    "type": "string",
+                    "enum": ["parametric", "direct"],
+                    "description": "Target design type",
+                },
+            },
+        },
+    },
 ]
 
 # ── tool annotations ──────────────────────────────────────────────────
@@ -2054,6 +2087,7 @@ _READ_ONLY = {
     "check_interference", "ping",
     "cam_list_setups", "cam_list_operations",
     "cam_get_operation_info",
+    "get_design_type",
 }
 _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
@@ -2064,6 +2098,7 @@ _IDEMPOTENT = {
     "set_parameter", "set_appearance",
     "cam_list_setups", "cam_list_operations",
     "cam_get_operation_info",
+    "get_design_type", "set_design_type",
 }
 
 for _t in TOOLS:

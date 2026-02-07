@@ -114,6 +114,8 @@ def test_expected_tools_present():
         "cam_generate_toolpath", "cam_post_process",
         "cam_list_setups", "cam_list_operations",
         "cam_get_operation_info",
+        # design type safety
+        "get_design_type", "set_design_type",
     }
     missing = expected - names
     assert not missing, f"Missing tools: {missing}"

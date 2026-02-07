@@ -140,11 +140,22 @@ def _delete_all(_p: dict) -> dict:
 
 
 def _undo(_p: dict) -> dict:
-    return {"undone": True}
+    return {"undone": True, "design_type": 1}
 
 
 def _execute_code(p: dict) -> dict:
-    return {"code": p.get("code", ""), "result": "None"}
+    return {"executed": True, "code": p.get("code", ""), "result": "None", "output": ""}
+
+
+# ── design type safety ───────────────────────────────────────────────
+
+def _get_design_type(_p: dict) -> dict:
+    return {"design_type": "parametric", "design_type_id": 1}
+
+
+def _set_design_type(p: dict) -> dict:
+    dt = p.get("design_type", "parametric")
+    return {"changed": True, "design_type": dt}
 
 
 # ── new geometry tools ────────────────────────────────────────────────
@@ -796,4 +807,7 @@ _DISPATCH: dict[str, Any] = {
     "cam_list_setups": _cam_list_setups,
     "cam_list_operations": _cam_list_operations,
     "cam_get_operation_info": _cam_get_operation_info,
+    # design type safety
+    "get_design_type": _get_design_type,
+    "set_design_type": _set_design_type,
 }

@@ -126,6 +126,7 @@ class TestMockSceneControl:
     def test_undo(self):
         result = mock_command("undo")
         assert result["undone"] is True
+        assert "design_type" in result
 
 
 class TestMockExecuteCode:
@@ -607,6 +608,24 @@ class TestMockCAM:
         assert "strategy" in result
         assert "tool_diameter" in result
         assert "has_toolpath" in result
+
+
+class TestMockDesignTypeSafety:
+    def test_get_design_type(self):
+        result = mock_command("get_design_type")
+        assert result["design_type"] == "parametric"
+        assert result["design_type_id"] == 1
+        assert result["mode"] == "mock"
+
+    def test_set_design_type_parametric(self):
+        result = mock_command("set_design_type", {"design_type": "parametric"})
+        assert result["changed"] is True
+        assert result["design_type"] == "parametric"
+
+    def test_set_design_type_direct(self):
+        result = mock_command("set_design_type", {"design_type": "direct"})
+        assert result["changed"] is True
+        assert result["design_type"] == "direct"
 
 
 class TestMockFallback:

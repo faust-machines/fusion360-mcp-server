@@ -135,6 +135,9 @@ class CommandHandler:
                 "cam_post_process":     self.cam_post_process,
                 # health
                 "ping":                 self.ping,
+                # design type safety
+                "get_design_type":      self.get_design_type,
+                "set_design_type":      self.set_design_type,
             }
 
         cmd_type = command.get("type")
@@ -1121,11 +1124,31 @@ class CommandHandler:
         return {"deleted": True}
 
     def undo(self):
-        # Execute undo via UI command
+        design = self._design()
+        type_before = design.designType
+
         cmd_def = self.ui.commandDefinitions.itemById('UndoCommand')
         if cmd_def:
             cmd_def.execute()
-        return {"undone": True}
+
+        # Check if undo silently switched design type (Parametric → Direct)
+        adsk.doEvents()  # let Fusion process the undo
+        type_after = design.designType
+        if type_before != type_after:
+            # Undo the undo — redo to restore original state
+            redo_def = self.ui.commandDefinitions.itemById('RedoCommand')
+            if redo_def:
+                redo_def.execute()
+                adsk.doEvents()
+            raise RuntimeError(
+                f"Undo aborted: would have changed design type from "
+                f"{'Parametric' if type_before == 1 else 'Direct'} to "
+                f"{'Parametric' if type_after == 1 else 'Direct'}. "
+                f"The undo was automatically reversed (redo). "
+                f"Delete the failed feature explicitly instead."
+            )
+
+        return {"undone": True, "design_type": type_after}
 
     # ------------------------------------------------------------------
     # Direct Primitives (via TemporaryBRepManager)
@@ -1919,15 +1942,67 @@ class CommandHandler:
         return {"pong": True}
 
     # ------------------------------------------------------------------
+    # Design type safety
+    # ------------------------------------------------------------------
+
+    def get_design_type(self):
+        """Return current design type: 'parametric' or 'direct'."""
+        design = self._design()
+        dt = design.designType
+        return {
+            "design_type": "parametric" if dt == adsk.fusion.DesignTypes.ParametricDesignType else "direct",
+            "design_type_id": dt,
+        }
+
+    def set_design_type(self, design_type: str):
+        """Switch design type. Use 'parametric' to recover from accidental
+        direct-mode switches (equivalent to UI 'Capture Design History')."""
+        design = self._design()
+        current = design.designType
+
+        if design_type == "parametric":
+            target = adsk.fusion.DesignTypes.ParametricDesignType
+            if current == target:
+                return {"changed": False, "design_type": "parametric",
+                        "message": "Already in parametric mode"}
+            design.designType = target
+            adsk.doEvents()
+            # Verify it actually changed
+            if design.designType != target:
+                raise RuntimeError(
+                    "Failed to switch to parametric mode. "
+                    "Try 'Capture Design History' in the Fusion UI."
+                )
+            return {"changed": True, "design_type": "parametric"}
+
+        elif design_type == "direct":
+            target = adsk.fusion.DesignTypes.DirectDesignType
+            if current == target:
+                return {"changed": False, "design_type": "direct",
+                        "message": "Already in direct mode"}
+            design.designType = target
+            adsk.doEvents()
+            return {"changed": True, "design_type": "direct"}
+
+        else:
+            raise RuntimeError(
+                f"Invalid design_type '{design_type}'. "
+                f"Use 'parametric' or 'direct'."
+            )
+
+    # ------------------------------------------------------------------
     # Code execution (REPL-style)
     # ------------------------------------------------------------------
 
     def execute_code(self, code: str):
+        design = self._design()
+        type_before = design.designType
+
         ns = {
             "adsk": adsk,
             "app": self.app,
             "ui": self.ui,
-            "design": self._design(),
+            "design": design,
             "component": self._root(),
             "math": math,
         }
@@ -1956,6 +2031,18 @@ class CommandHandler:
 
         output = buf.getvalue()
         result = last_expr_value if last_expr_value is not None else output
+
+        # Warn if design type changed during execution
+        type_after = design.designType
+        design_type_warning = None
+        if type_before != type_after:
+            design_type_warning = (
+                f"WARNING: Design type changed from "
+                f"{'parametric' if type_before == 1 else 'direct'} to "
+                f"{'parametric' if type_after == 1 else 'direct'} "
+                f"during code execution. Use set_design_type to recover."
+            )
+            log.warning(design_type_warning)
         if result is not None:
             try:
                 import json as _json
@@ -1963,7 +2050,10 @@ class CommandHandler:
             except (TypeError, ValueError):
                 result = str(result)
 
-        return {"executed": True, "result": result, "output": output}
+        response = {"executed": True, "result": result, "output": output}
+        if design_type_warning:
+            response["design_type_warning"] = design_type_warning
+        return response
 
     # ------------------------------------------------------------------
     # Camera helper

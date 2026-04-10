@@ -1531,9 +1531,8 @@ class CommandHandler:
                          comment: str = None):
         design = self._design()
         params = design.userParameters
-        inp = params.createInput(name, adsk.core.ValueInput.createByReal(value),
-                                 unit, comment or "")
-        params.add(inp)
+        params.add(name, adsk.core.ValueInput.createByReal(value),
+                   unit, comment or "")
         return {"created": True, "name": name, "value": value, "unit": unit}
 
     def set_parameter(self, name: str, value: float):

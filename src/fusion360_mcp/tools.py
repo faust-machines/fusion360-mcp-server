@@ -222,6 +222,47 @@ TOOLS: list[dict] = [
     },
     # ── new commands ─────────────────────────────────────────────────
     {
+        "name": "rename_body",
+        "title": "Rename Body",
+        "description": "Rename a body (searches root and all components)",
+        "inputSchema": {
+            "type": "object",
+            "required": ["body_name", "new_name"],
+            "properties": {
+                "body_name": {
+                    "type": "string",
+                    "description": "Current body name",
+                },
+                "new_name": {
+                    "type": "string",
+                    "description": "New name for the body",
+                },
+            },
+        },
+    },
+    {
+        "name": "export_body_step",
+        "title": "Export Body STEP",
+        "description": (
+            "Export a single body as STEP, even if inside a component. "
+            "Uses a temp component workaround for the Fusion STEP API."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["body_name"],
+            "properties": {
+                "body_name": {"type": "string"},
+                "file_path": {
+                    "type": "string",
+                    "description": (
+                        "Destination path "
+                        "(default: ~/Desktop/<name>.step)"
+                    ),
+                },
+            },
+        },
+    },
+    {
         "name": "move_body",
         "title": "Move Body",
         "description": "Translate a named body by (x, y, z)",
@@ -2088,6 +2129,7 @@ _READ_ONLY = {
     "cam_list_setups", "cam_list_operations",
     "cam_get_operation_info",
     "get_design_type",
+    "export_body_step",
 }
 _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
@@ -2099,6 +2141,7 @@ _IDEMPOTENT = {
     "cam_list_setups", "cam_list_operations",
     "cam_get_operation_info",
     "get_design_type", "set_design_type",
+    "rename_body", "export_body_step",
 }
 
 for _t in TOOLS:

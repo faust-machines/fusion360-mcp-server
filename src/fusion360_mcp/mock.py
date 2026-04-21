@@ -113,6 +113,14 @@ def _mirror(p: dict) -> dict:
     }
 
 
+def _rename_body(p: dict) -> dict:
+    return {
+        "renamed": True,
+        "old_name": p.get("body_name", "Body1"),
+        "new_name": p.get("new_name", "RenamedBody"),
+    }
+
+
 def _move_body(p: dict) -> dict:
     return {
         "body_name": p.get("body_name", "Body1"),
@@ -124,6 +132,12 @@ def _export_stl(p: dict) -> dict:
     name = p.get("body_name", "Body1")
     path = p.get("file_path", f"~/Desktop/{name}.stl")
     return {"body_name": name, "file_path": path}
+
+
+def _export_body_step(p: dict) -> dict:
+    name = p.get("body_name", "Body1")
+    path = p.get("file_path", f"~/Desktop/{name}.step")
+    return {"exported": True, "body": name, "file_path": path}
 
 
 def _boolean_operation(p: dict) -> dict:
@@ -726,8 +740,10 @@ _DISPATCH: dict[str, Any] = {
     "chamfer": _chamfer,
     "shell": _shell,
     "mirror": _mirror,
+    "rename_body": _rename_body,
     "move_body": _move_body,
     "export_stl": _export_stl,
+    "export_body_step": _export_body_step,
     "boolean_operation": _boolean_operation,
     "delete_all": _delete_all,
     "undo": _undo,

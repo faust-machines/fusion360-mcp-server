@@ -96,6 +96,7 @@ class TestToolAnnotations:
             "cam_list_setups", "cam_list_operations",
             "cam_get_operation_info",
             "get_design_type",
+            "export_body_step",
         }
         for t in TOOLS:
             ann = t["annotations"]

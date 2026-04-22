@@ -116,6 +116,8 @@ def test_expected_tools_present():
         "cam_get_operation_info",
         # design type safety
         "get_design_type", "set_design_type",
+        # utility
+        "rename_body",
     }
     missing = expected - names
     assert not missing, f"Missing tools: {missing}"

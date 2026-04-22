@@ -80,6 +80,7 @@ class CommandHandler:
                 "unsuppress_feature":   self.unsuppress_feature,
                 # body operations
                 "move_body":            self.move_body,
+                "rename_body":          self.rename_body,
                 "export_stl":           self.export_stl,
                 "export_step":          self.export_step,
                 "export_f3d":           self.export_f3d,
@@ -187,10 +188,18 @@ class CommandHandler:
 
     def _body_by_name(self, name: str):
         root = self._root()
+        # Search root bodies first
         for i in range(root.bRepBodies.count):
             b = root.bRepBodies.item(i)
             if b.name == name:
                 return b
+        # Search bodies inside components via occurrence proxies (assembly design)
+        # Returns proxy body in root coordinate space for correct boolean ops
+        for occ in root.allOccurrences:
+            for i in range(occ.bRepBodies.count):
+                b = occ.bRepBodies.item(i)
+                if b.name == name:
+                    return b
         raise RuntimeError(f"Body '{name}' not found")
 
     def _component_by_name(self, name: str):
@@ -1021,6 +1030,12 @@ class CommandHandler:
     # Body Operations
     # ------------------------------------------------------------------
 
+    def rename_body(self, body_name: str, new_name: str):
+        body = self._body_by_name(body_name)
+        old_name = body.name
+        body.name = new_name
+        return {"renamed": True, "old_name": old_name, "new_name": new_name}
+
     def move_body(self, body_name: str, x: float = 0, y: float = 0,
                   z: float = 0):
         root = self._root()
@@ -1048,12 +1063,38 @@ class CommandHandler:
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         export_mgr = self._design().exportManager
-        stl_opts = export_mgr.createSTLExportOptions(body, file_path)
-        stl_opts.meshRefinement = (
-            adsk.fusion.MeshRefinementSettings.MeshRefinementMedium)
-        export_mgr.execute(stl_opts)
+        occ = body.assemblyContext  # None if body is at root
 
-        return {"exported": True, "body": body_name, "file_path": file_path}
+        if occ is None:
+            stl_opts = export_mgr.createSTLExportOptions(body, file_path)
+            stl_opts.meshRefinement = (
+                adsk.fusion.MeshRefinementSettings.MeshRefinementMedium)
+            export_mgr.execute(stl_opts)
+            return {"exported": True, "body": body_name,
+                    "file_path": file_path}
+
+        # Body lives in a component occurrence: hide siblings so the
+        # occurrence export only contains the target body. Identify
+        # siblings by entityToken, not name, to handle same-name bodies.
+        target_token = body.entityToken
+        hidden = []
+        for i in range(occ.bRepBodies.count):
+            sibling = occ.bRepBodies.item(i)
+            if sibling.entityToken != target_token and sibling.isVisible:
+                sibling.isVisible = False
+                hidden.append(sibling)
+
+        try:
+            stl_opts = export_mgr.createSTLExportOptions(occ, file_path)
+            stl_opts.meshRefinement = (
+                adsk.fusion.MeshRefinementSettings.MeshRefinementMedium)
+            export_mgr.execute(stl_opts)
+        finally:
+            for sibling in hidden:
+                sibling.isVisible = True
+
+        return {"exported": True, "body": body_name,
+                "file_path": file_path}
 
     def export_step(self, body_name: str, file_path: str = None):
         body = self._body_by_name(body_name)
@@ -1065,10 +1106,34 @@ class CommandHandler:
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         export_mgr = self._design().exportManager
-        step_opts = export_mgr.createSTEPExportOptions(file_path, body)
-        export_mgr.execute(step_opts)
+        occ = body.assemblyContext  # None if body is at root
 
-        return {"exported": True, "body": body_name, "file_path": file_path}
+        if occ is None:
+            step_opts = export_mgr.createSTEPExportOptions(file_path, body)
+            export_mgr.execute(step_opts)
+            return {"exported": True, "body": body_name,
+                    "file_path": file_path}
+
+        # Body lives in a component occurrence: hide siblings so the
+        # occurrence export only contains the target body. Identify
+        # siblings by entityToken, not name, to handle same-name bodies.
+        target_token = body.entityToken
+        hidden = []
+        for i in range(occ.bRepBodies.count):
+            sibling = occ.bRepBodies.item(i)
+            if sibling.entityToken != target_token and sibling.isVisible:
+                sibling.isVisible = False
+                hidden.append(sibling)
+
+        try:
+            step_opts = export_mgr.createSTEPExportOptions(file_path, occ)
+            export_mgr.execute(step_opts)
+        finally:
+            for sibling in hidden:
+                sibling.isVisible = True
+
+        return {"exported": True, "body": body_name,
+                "file_path": file_path}
 
     def export_f3d(self, file_path: str = None):
         design = self._design()
@@ -1507,8 +1572,22 @@ class CommandHandler:
 
     def set_appearance(self, target_name: str, appearance_name: str,
                        target_type: str = "body", face_index: int = None):
-        # Find appearance in library
-        app_lib = self.app.materialLibraries.itemByName("Fusion 360 Appearance Library")
+        # Find appearance in library — try both known library names
+        app_lib = self.app.materialLibraries.itemByName(
+            "Fusion Appearance Library")
+        if app_lib is None:
+            app_lib = self.app.materialLibraries.itemByName(
+                "Fusion 360 Appearance Library")
+        if app_lib is None:
+            # Fall back to searching all libraries
+            for i in range(self.app.materialLibraries.count):
+                lib = self.app.materialLibraries.item(i)
+                if lib.appearances.count > 0:
+                    app_lib = lib
+                    break
+        if app_lib is None:
+            raise RuntimeError("No appearance library found")
+
         appearance = None
         for i in range(app_lib.appearances.count):
             app = app_lib.appearances.item(i)

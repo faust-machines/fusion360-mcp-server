@@ -628,6 +628,16 @@ class TestMockDesignTypeSafety:
         assert result["design_type"] == "direct"
 
 
+class TestMockRenameBody:
+    def test_rename_body(self):
+        result = mock_command("rename_body", {
+            "body_name": "Body1", "new_name": "ShellTop",
+        })
+        assert result["renamed"] is True
+        assert result["old_name"] == "Body1"
+        assert result["new_name"] == "ShellTop"
+
+
 class TestMockFallback:
     def test_unknown_command_returns_warning(self):
         result = mock_command("totally_unknown_command", {"x": 1})

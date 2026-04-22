@@ -113,6 +113,14 @@ def _mirror(p: dict) -> dict:
     }
 
 
+def _rename_body(p: dict) -> dict:
+    return {
+        "renamed": True,
+        "old_name": p.get("body_name", "Body1"),
+        "new_name": p.get("new_name", "RenamedBody"),
+    }
+
+
 def _move_body(p: dict) -> dict:
     return {
         "body_name": p.get("body_name", "Body1"),
@@ -726,6 +734,7 @@ _DISPATCH: dict[str, Any] = {
     "chamfer": _chamfer,
     "shell": _shell,
     "mirror": _mirror,
+    "rename_body": _rename_body,
     "move_body": _move_body,
     "export_stl": _export_stl,
     "boolean_operation": _boolean_operation,

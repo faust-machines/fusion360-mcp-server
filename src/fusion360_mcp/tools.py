@@ -222,6 +222,25 @@ TOOLS: list[dict] = [
     },
     # ── new commands ─────────────────────────────────────────────────
     {
+        "name": "rename_body",
+        "title": "Rename Body",
+        "description": "Rename a body (searches root and all components)",
+        "inputSchema": {
+            "type": "object",
+            "required": ["body_name", "new_name"],
+            "properties": {
+                "body_name": {
+                    "type": "string",
+                    "description": "Current body name",
+                },
+                "new_name": {
+                    "type": "string",
+                    "description": "New name for the body",
+                },
+            },
+        },
+    },
+    {
         "name": "move_body",
         "title": "Move Body",
         "description": "Translate a named body by (x, y, z)",
@@ -2098,6 +2117,7 @@ _IDEMPOTENT = {
     "cam_get_operation_info",
     "get_design_type",
     "set_design_type",
+    "rename_body",
     "render_view",
 }
 

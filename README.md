@@ -91,7 +91,7 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 2. Stop the add-in in Fusion (Shift+S → Add-Ins → Fusion360MCP → Stop)
 3. Delete the add-in folder from Fusion's AddIns directory
 
-## Available Tools (81)
+## Available Tools (84)
 
 ### Scene & Query
 | Tool | Description |
@@ -100,6 +100,12 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 | `get_scene_info` | Design name, bodies, sketches, features, camera |
 | `get_object_info` | Detailed info about a named body or sketch |
 | `list_components` | List all components in the design |
+
+### Design Type Safety
+| Tool | Description |
+|------|-------------|
+| `get_design_type` | Check if design is in parametric or direct mode |
+| `set_design_type` | Switch design type (parametric/direct recovery) |
 
 ### Sketching
 | Tool | Description |
@@ -145,9 +151,10 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 | Tool | Description |
 |------|-------------|
 | `move_body` | Translate a body by (x, y, z) |
+| `rename_body` | Rename a body (searches root and all components) |
 | `boolean_operation` | Join/cut/intersect two bodies |
 | `delete_all` | Clear the design |
-| `undo` | Undo last operation |
+| `undo` | Undo last operation (with design-type safety guard) |
 
 ### Direct Primitives
 | Tool | Description |
@@ -213,8 +220,8 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 ### Export
 | Tool | Description |
 |------|-------------|
-| `export_stl` | Export body as STL |
-| `export_step` | Export body as STEP |
+| `export_stl` | Export body as STL (supports bodies inside components) |
+| `export_step` | Export body as STEP (supports bodies inside components) |
 | `export_f3d` | Export design as Fusion archive |
 
 ### CAM / Manufacturing
@@ -246,7 +253,7 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 
 ```bash
 uv sync --dev       # install deps
-uv run pytest -v    # run tests
+uv run pytest -v    # run tests (171 tests)
 uv run ruff check   # lint
 ```
 
@@ -256,6 +263,7 @@ uv run ruff check   # lint
 - One operation per tool call. Batching multiple operations crashes the add-in.
 - Commands time out after 30 seconds.
 - Add-in logs to `~/fusion360mcp.log`.
+- The `undo` tool includes a design-type safety guard — it checks before/after and auto-redoes if the undo would switch from parametric to direct mode.
 
 ## Acknowledgements
 

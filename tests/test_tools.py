@@ -168,6 +168,8 @@ def test_expected_tools_present():
         # design type safety
         "get_design_type",
         "set_design_type",
+        # utility
+        "rename_body",
         # perception
         "render_view",
     }

@@ -94,6 +94,7 @@ class TestToolAnnotations:
         read_only_names = {
             "get_scene_info",
             "get_object_info",
+            "get_bounding_box",
             "list_components",
             "get_parameters",
             "get_physical_properties",

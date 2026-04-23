@@ -63,6 +63,7 @@ def test_expected_tools_present():
         # scene / query
         "get_scene_info",
         "get_object_info",
+        "get_bounding_box",
         # sketch
         "create_sketch",
         "draw_rectangle",

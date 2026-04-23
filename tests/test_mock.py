@@ -45,6 +45,14 @@ class TestMockSceneQuery:
         assert result["name"] == "TestBody"
         assert "faces" in result
 
+    def test_get_bounding_box(self):
+        result = mock_command("get_bounding_box", {"name": "TestBody"})
+        assert result["name"] == "TestBody"
+        assert result["found"] is True
+        assert result["min"] == [0.0, 0.0, 0.0]
+        assert len(result["size"]) == 3
+        assert len(result["center"]) == 3
+
 
 class TestMockSketch:
     def test_create_sketch(self):

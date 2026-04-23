@@ -1,19 +1,23 @@
 """
 TCP connection to the Fusion360MCP add-in running inside Fusion 360.
 
-The add-in listens on localhost:9876 and speaks newline-delimited JSON.
+The add-in listens on localhost:9876 by default and speaks
+newline-delimited JSON. Override via env vars FUSION_MCP_HOST /
+FUSION_MCP_PORT for cross-machine setups (e.g. MCP server on a
+Mac Mini connecting to Fusion running on a Windows PC).
 """
 
 import json
 import logging
+import os
 import socket
 import time
 from typing import Any
 
 log = logging.getLogger("fusion360_mcp.connection")
 
-_DEFAULT_HOST = "localhost"
-_DEFAULT_PORT = 9876
+_DEFAULT_HOST = os.environ.get("FUSION_MCP_HOST", "localhost")
+_DEFAULT_PORT = int(os.environ.get("FUSION_MCP_PORT", "9876"))
 _RECV_BUF = 65536
 _TIMEOUT = 30.0  # matches the add-in's bridge timeout
 _PING_TIMEOUT = 5.0

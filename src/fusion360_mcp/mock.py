@@ -46,6 +46,19 @@ def _get_object_info(p: dict) -> dict:
     }
 
 
+def _get_bounding_box(p: dict) -> dict:
+    name = p.get("name", "Unknown")
+    return {
+        "found": True,
+        "type": "body",
+        "name": name,
+        "min": [0.0, 0.0, 0.0],
+        "max": [50.0, 30.0, 15.0],
+        "size": [50.0, 30.0, 15.0],
+        "center": [25.0, 15.0, 7.5],
+    }
+
+
 def _create_sketch(p: dict) -> dict:
     plane = p.get("plane", "xy")
     return {"sketch_name": f"Sketch_mock_{plane}", "plane": plane}
@@ -264,6 +277,57 @@ def _export_step(p: dict) -> dict:
 def _export_f3d(p: dict) -> dict:
     path = p.get("file_path", "~/Desktop/MockDesign.f3d")
     return {"file_path": path}
+
+
+def _export(p: dict) -> dict:
+    fmt = (p.get("format") or "").lower()
+    path = p.get("file_path", "")
+    if not fmt and path:
+        fmt = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    name = p.get("body_name", "Body1")
+    return {
+        "exported": True,
+        "format": fmt or "f3d",
+        "body": name,
+        "file_path": path or f"~/Desktop/{name}.{fmt or 'f3d'}",
+    }
+
+
+def _import_mesh(p: dict) -> dict:
+    path = p.get("file_path", "/tmp/mesh.stl")
+    units = p.get("units", "mm")
+    component = p.get("component_name") or "RootComponent"
+    return {
+        "imported": True,
+        "file_path": path,
+        "mesh_name": "MeshBody_mock",
+        "component": component,
+        "units": units,
+        "bounding_box": {
+            "min": [0.0, 0.0, 0.0],
+            "max": [10.0, 5.0, 2.0],
+            "size": [10.0, 5.0, 2.0],
+        },
+    }
+
+
+def _create_box_parametric(p: dict) -> dict:
+    return {
+        "created": True,
+        "body_name": p.get("body_name") or "BoxParametric_mock",
+        "feature_name": "Extrude_mock",
+        "sketch_name": "Sketch_mock",
+        "length": p.get("length", 1),
+        "width": p.get("width", 1),
+        "height": p.get("height", 1),
+        "origin": [
+            p.get("origin_x", 0),
+            p.get("origin_y", 0),
+            p.get("origin_z", 0),
+        ],
+        "plane": p.get("plane", "xy"),
+        "component": p.get("component_name") or "RootComponent",
+    }
 
 
 # ── parameter tools ───────────────────────────────────────────────────
@@ -724,6 +788,7 @@ _DISPATCH: dict[str, Any] = {
     "ping": _ping,
     "get_scene_info": _get_scene_info,
     "get_object_info": _get_object_info,
+    "get_bounding_box": _get_bounding_box,
     "create_sketch": _create_sketch,
     "draw_rectangle": _draw_rectangle,
     "draw_circle": _draw_circle,
@@ -753,6 +818,9 @@ _DISPATCH: dict[str, Any] = {
     "list_components": _list_components,
     "export_step": _export_step,
     "export_f3d": _export_f3d,
+    "export": _export,
+    "import_mesh": _import_mesh,
+    "create_box_parametric": _create_box_parametric,
     "get_parameters": _get_parameters,
     "create_parameter": _create_parameter,
     "set_parameter": _set_parameter,

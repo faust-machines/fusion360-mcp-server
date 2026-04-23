@@ -81,6 +81,36 @@ uvx fusion360-mcp-server --mode socket
 ```
 </details>
 
+### Cross-machine setup (LAN)
+
+If the MCP server and Fusion 360 run on different machines (e.g. MCP server on a Mac Mini, Fusion on a Windows PC), override the bind/connect address via environment variables on **both** sides.
+
+**On the Fusion host** (where the add-in runs), bind to all interfaces before starting Fusion:
+
+```powershell
+# Windows
+$env:FUSION_MCP_HOST = "0.0.0.0"
+```
+
+```bash
+# macOS / Linux
+export FUSION_MCP_HOST=0.0.0.0
+```
+
+Then start Fusion and run the `Fusion360MCP` add-in. The log line `Server listening on 0.0.0.0:9876` confirms the bind.
+
+**On the MCP-server host**, point the client at the Fusion host's LAN IP:
+
+```bash
+# Either via CLI flag
+uvx fusion360-mcp-server --mode socket --host 192.168.1.42
+
+# Or via env var (useful in MCP client configs)
+FUSION_MCP_HOST=192.168.1.42 uvx fusion360-mcp-server --mode socket
+```
+
+**Security note:** the TCP socket has no authentication. Only expose it on a trusted LAN — never bind to `0.0.0.0` on a host reachable from the public internet.
+
 ### 3. Verify
 
 Call the `ping` tool from your client. If it returns `{"pong": true}`, everything is connected.
@@ -91,7 +121,7 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 2. Stop the add-in in Fusion (Shift+S → Add-Ins → Fusion360MCP → Stop)
 3. Delete the add-in folder from Fusion's AddIns directory
 
-## Available Tools (83)
+## Available Tools (87)
 
 ### Scene & Query
 | Tool | Description |
@@ -99,6 +129,7 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 | `ping` | Health check (instant, no Fusion API) |
 | `get_scene_info` | Design name, bodies, sketches, features, camera |
 | `get_object_info` | Detailed info about a named body or sketch |
+| `get_bounding_box` | Axis-aligned bbox (min/max/size/center) for body or component; unions all bodies when called on a component |
 | `list_components` | List all components in the design |
 
 ### Design Type Safety
@@ -159,7 +190,8 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 ### Direct Primitives
 | Tool | Description |
 |------|-------------|
-| `create_box` | Box (via TemporaryBRepManager) |
+| `create_box` | Box (via TemporaryBRepManager, history-less) |
+| `create_box_parametric` | History-based box: sketch rectangle + dimensions + extrude. `length`/`width`/`height` accept numbers (cm) or string expressions referencing User Parameters (e.g. `"boxL"`, `"outer - 2*wall_t"`) |
 | `create_cylinder` | Cylinder |
 | `create_sphere` | Sphere |
 | `create_torus` | Torus |
@@ -217,12 +249,14 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 | `set_parameter` | Update a parameter value |
 | `delete_parameter` | Remove a parameter |
 
-### Export
+### Import / Export
 | Tool | Description |
 |------|-------------|
+| `import_mesh` | Import STL/OBJ/3MF as mesh body via `MeshBodies.addByFile()`. Unit-aware (`mm`/`cm`/`m`/`in`/`ft`). Returns the mesh name and bounding box |
 | `export_stl` | Export body as STL (supports bodies inside components) |
 | `export_step` | Export body as STEP (supports bodies inside components) |
 | `export_f3d` | Export design as Fusion archive |
+| `export` | Unified dispatcher — routes to `export_stl`/`export_step`/`export_f3d` based on explicit `format` or file-extension inference |
 
 ### CAM / Manufacturing
 | Tool | Description |

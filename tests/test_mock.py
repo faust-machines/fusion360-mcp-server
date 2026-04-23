@@ -45,6 +45,60 @@ class TestMockSceneQuery:
         assert result["name"] == "TestBody"
         assert "faces" in result
 
+    def test_get_bounding_box(self):
+        result = mock_command("get_bounding_box", {"name": "TestBody"})
+        assert result["name"] == "TestBody"
+        assert result["found"] is True
+        assert result["min"] == [0.0, 0.0, 0.0]
+        assert len(result["size"]) == 3
+        assert len(result["center"]) == 3
+
+    def test_import_mesh(self):
+        result = mock_command("import_mesh", {
+            "file_path": "/tmp/wheel_arch.stl",
+            "units": "mm",
+        })
+        assert result["imported"] is True
+        assert result["file_path"] == "/tmp/wheel_arch.stl"
+        assert result["units"] == "mm"
+        assert "mesh_name" in result
+        assert "bounding_box" in result
+
+    def test_create_box_parametric_numeric(self):
+        result = mock_command("create_box_parametric", {
+            "length": 56, "width": 30, "height": 25,
+        })
+        assert result["created"] is True
+        assert result["length"] == 56
+        assert "body_name" in result
+        assert "sketch_name" in result
+
+    def test_create_box_parametric_expression(self):
+        result = mock_command("create_box_parametric", {
+            "length": "boxL",
+            "width": "boxW",
+            "height": "boxH - wall_t",
+            "body_name": "BoxRechts",
+        })
+        assert result["body_name"] == "BoxRechts"
+        assert result["height"] == "boxH - wall_t"
+
+    def test_export_unified_infers_format(self):
+        result = mock_command("export", {
+            "body_name": "BoxRechts",
+            "file_path": "/tmp/BoxRechts.step",
+        })
+        assert result["exported"] is True
+        assert result["format"] == "step"
+        assert result["body"] == "BoxRechts"
+
+    def test_export_unified_explicit_format(self):
+        result = mock_command("export", {
+            "format": "stl",
+            "body_name": "Part1",
+        })
+        assert result["format"] == "stl"
+
 
 class TestMockSketch:
     def test_create_sketch(self):

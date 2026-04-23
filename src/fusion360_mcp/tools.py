@@ -30,6 +30,26 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "get_bounding_box",
+        "title": "Get Bounding Box",
+        "description": (
+            "Axis-aligned bounding box for a body or component by name. "
+            "Returns min, max, size, and center in cm (Fusion internal units). "
+            "For components, unions bounding boxes of all contained bodies. "
+            "Useful for measuring imported reference geometry."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Body or component name",
+                },
+            },
+        },
+    },
     # ── sketch ───────────────────────────────────────────────────────
     {
         "name": "create_sketch",
@@ -555,6 +575,71 @@ TOOLS: list[dict] = [
                         "Destination path "
                         "(default: ~/Desktop/<design_name>.f3d)"
                     ),
+                },
+            },
+        },
+    },
+    {
+        "name": "export",
+        "title": "Export (unified)",
+        "description": (
+            "Unified export wrapper — dispatches to export_stl / export_step / "
+            "export_f3d based on format or file extension. "
+            "Format is auto-detected from file_path extension if not specified. "
+            "STL and STEP require body_name; F3D exports the whole design."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["stl", "step", "stp", "f3d"],
+                    "description": (
+                        "Output format. Inferred from file_path extension "
+                        "if omitted."
+                    ),
+                },
+                "body_name": {
+                    "type": "string",
+                    "description": "Body to export (required for stl/step)",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": (
+                        "Destination path (default: ~/Desktop/<name>.<ext>)"
+                    ),
+                },
+            },
+        },
+    },
+    # ── import ─────────────────────────────────────────────────────────
+    {
+        "name": "import_mesh",
+        "title": "Import Mesh",
+        "description": (
+            "Import a mesh file (STL, OBJ, or 3MF) as a mesh body. "
+            "Returns the mesh name and bounding box. "
+            "Use for reference geometry (e.g. exported SketchUp model)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["file_path"],
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to mesh file (.stl/.obj/.3mf)",
+                },
+                "component_name": {
+                    "type": "string",
+                    "description": (
+                        "Target component name (omit for root component)"
+                    ),
+                },
+                "units": {
+                    "type": "string",
+                    "enum": ["mm", "cm", "m", "in", "ft"],
+                    "default": "mm",
+                    "description": "Source mesh units (default: mm)",
                 },
             },
         },
@@ -1248,6 +1333,64 @@ TOOLS: list[dict] = [
                 "center_x": {"type": "number", "default": 0},
                 "center_y": {"type": "number", "default": 0},
                 "center_z": {"type": "number", "default": 0},
+            },
+        },
+    },
+    {
+        "name": "create_box_parametric",
+        "title": "Create Parametric Box",
+        "description": (
+            "Create a history-based rectangular box via sketch rectangle + "
+            "extrude (unlike create_box which uses TemporaryBRepManager). "
+            "length/width/height accept a number (cm, Fusion internal unit) "
+            "or a string expression referencing User Parameters "
+            "(e.g. 'boxL', '56 mm', 'outer - 2 * wall_t'). "
+            "Call create_parameter first to define named parameters."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["length", "width", "height"],
+            "properties": {
+                "length": {
+                    "oneOf": [
+                        {"type": "number", "minimum": 0.001},
+                        {"type": "string"},
+                    ],
+                    "description": "Along sketch X: number (cm) or expression",
+                },
+                "width": {
+                    "oneOf": [
+                        {"type": "number", "minimum": 0.001},
+                        {"type": "string"},
+                    ],
+                    "description": "Along sketch Y: number (cm) or expression",
+                },
+                "height": {
+                    "oneOf": [
+                        {"type": "number", "minimum": 0.001},
+                        {"type": "string"},
+                    ],
+                    "description": "Extrude distance: number (cm) or expression",
+                },
+                "origin_x": {"type": "number", "default": 0},
+                "origin_y": {"type": "number", "default": 0},
+                "origin_z": {
+                    "type": "number", "default": 0,
+                    "description": "Z-offset of sketch plane (cm)",
+                },
+                "plane": {
+                    "type": "string",
+                    "enum": ["xy", "yz", "xz"],
+                    "default": "xy",
+                },
+                "component_name": {
+                    "type": "string",
+                    "description": "Target component (omit for root)",
+                },
+                "body_name": {
+                    "type": "string",
+                    "description": "Optional name for the resulting body",
+                },
             },
         },
     },
@@ -2100,7 +2243,8 @@ TOOLS: list[dict] = [
 # side-effect profile so MCP clients can auto-approve safe operations.
 
 _READ_ONLY = {
-    "get_scene_info", "get_object_info", "list_components",
+    "get_scene_info", "get_object_info", "get_bounding_box",
+    "list_components",
     "get_parameters", "get_physical_properties",
     "measure_distance", "measure_angle",
     "check_interference", "ping",
@@ -2111,6 +2255,7 @@ _READ_ONLY = {
 _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
     "ping", "get_scene_info", "get_object_info",
+    "get_bounding_box",
     "list_components", "get_parameters",
     "get_physical_properties", "measure_distance",
     "measure_angle", "check_interference",

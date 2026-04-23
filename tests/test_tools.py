@@ -58,7 +58,7 @@ def test_expected_tools_present():
     names = {t["name"] for t in TOOLS}
     expected = {
         # scene / query
-        "get_scene_info", "get_object_info",
+        "get_scene_info", "get_object_info", "get_bounding_box",
         # sketch
         "create_sketch", "draw_rectangle", "draw_circle", "draw_line",
         # features
@@ -77,7 +77,9 @@ def test_expected_tools_present():
         # assembly
         "create_component", "add_joint", "list_components",
         # export
-        "export_step", "export_f3d",
+        "export_step", "export_f3d", "export",
+        # import
+        "import_mesh",
         # parameters
         "get_parameters", "create_parameter", "set_parameter", "delete_parameter",
         # sketch constraints & dimensions
@@ -93,6 +95,7 @@ def test_expected_tools_present():
         "offset_faces", "scale_body",
         # direct primitives
         "create_box", "create_cylinder", "create_sphere", "create_torus",
+        "create_box_parametric",
         # assembly (extended)
         "create_as_built_joint", "create_rigid_group",
         # inspection / analysis

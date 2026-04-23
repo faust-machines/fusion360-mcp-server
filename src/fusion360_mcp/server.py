@@ -7,6 +7,7 @@ Supports ``--mode mock`` for testing without Fusion running.
 
 import json
 import logging
+import os
 import re
 
 import anyio
@@ -29,12 +30,13 @@ def _send(
     command_type: str,
     params: dict | None = None,
     *,
+    host: str = "localhost",
     port: int = 9876,
 ) -> dict:
     """Route a command through either the real TCP connection or mock."""
     if mode == "mock":
         return mock_command(command_type, params)
-    conn = get_connection(port=port)
+    conn = get_connection(host=host, port=port)
     return conn.send_command(command_type, params)
 
 
@@ -143,9 +145,21 @@ def _format_result(
     help="'socket' connects to Fusion, 'mock' returns test data",
 )
 @click.option(
-    "--port", type=int, default=9876, help="TCP port the Fusion 360 add-in listens on"
+    "--host",
+    type=str,
+    default=lambda: os.environ.get("FUSION_MCP_HOST", "localhost"),
+    help=(
+        "Host where the Fusion 360 add-in listens (env: FUSION_MCP_HOST). "
+        "Use the Windows LAN IP when the MCP server runs on a different machine."
+    ),
 )
-def main(mode: str, port: int) -> int:
+@click.option(
+    "--port",
+    type=int,
+    default=lambda: int(os.environ.get("FUSION_MCP_PORT", "9876")),
+    help="TCP port the Fusion 360 add-in listens on (env: FUSION_MCP_PORT)",
+)
+def main(mode: str, host: str, port: int) -> int:
     """Fusion360 MCP Server — connects Claude to Fusion 360."""
 
     app = Server("fusion360-mcp-server")
@@ -166,7 +180,7 @@ def main(mode: str, port: int) -> int:
             raise ValueError(f"Unknown tool: {name}")
 
         try:
-            result = _send(mode, name, arguments, port=port)
+            result = _send(mode, name, arguments, host=host, port=port)
         except Exception as exc:
             reset_connection()
             content = [

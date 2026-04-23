@@ -1,10 +1,23 @@
 # Fusion360 MCP Server
 
-> **Beta** — This project is under active development. APIs and tool behavior may change between releases. Use at your own discretion. Feedback and bug reports welcome via [GitHub Issues](https://github.com/faust-machines/fusion360-mcp-server/issues).
+> **Fork note** — This is a fork of [faust-machines/fusion360-mcp-server](https://github.com/faust-machines/fusion360-mcp-server) with four added tools oriented toward parametric box construction against imported reference meshes, plus cross-machine LAN support. Upstream credit for the architecture and 90 base tools goes to faust-machines. See [Fork additions](#fork-additions) below.
+
+> **Beta** — This project is under active development. APIs and tool behavior may change between releases. Use at your own discretion.
 
 MCP server that connects AI coding agents to Autodesk Fusion 360 for CAD automation.
 
 Tested with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Works with any MCP-compatible client — OpenCode, Codex, Cursor, or anything that speaks the [Model Context Protocol](https://modelcontextprotocol.io).
+
+## Fork additions
+
+Four new tools on top of upstream:
+
+- **`get_bounding_box`** — axis-aligned bounding box (min/max/size/center in cm) for a body or component. For components, unions contained bodies.
+- **`import_mesh`** — import STL/OBJ/3MF files as mesh bodies via `MeshBodies.addByFile()`. Unit-aware (`mm`/`cm`/`m`/`in`/`ft`). Use to bring in reference geometry from SketchUp or scanners.
+- **`create_box_parametric`** — history-based box via sketch rectangle + dimensions + extrude. `length`/`width`/`height` accept numbers (cm) or string expressions referencing User Parameters (e.g. `"boxL"`, `"outer - 2 * wall_t"`).
+- **`export`** — unified dispatcher around `export_stl` / `export_step` / `export_f3d`, with format inference from file extension.
+
+Plus LAN-host support for setups where the MCP server and Fusion run on different machines — see [Cross-machine setup](#cross-machine-setup-lan).
 
 ## How it works
 
@@ -80,6 +93,36 @@ uvx fusion360-mcp-server --mode socket
 }
 ```
 </details>
+
+### Cross-machine setup (LAN)
+
+If the MCP server and Fusion 360 run on different machines (e.g. MCP server on a Mac Mini, Fusion on a Windows PC), override the bind/connect address via environment variables on **both** sides.
+
+**On the Fusion host** (where the add-in runs), bind to all interfaces before starting Fusion:
+
+```powershell
+# Windows
+$env:FUSION_MCP_HOST = "0.0.0.0"
+```
+
+```bash
+# macOS / Linux
+export FUSION_MCP_HOST=0.0.0.0
+```
+
+Then start Fusion and run the `Fusion360MCP` add-in. The log line `Server listening on 0.0.0.0:9876` confirms the bind.
+
+**On the MCP-server host**, point the client at the Fusion host's LAN IP:
+
+```bash
+# Either via CLI flag
+uvx fusion360-mcp-server --mode socket --host 192.168.1.42
+
+# Or via env var (useful in MCP client configs)
+FUSION_MCP_HOST=192.168.1.42 uvx fusion360-mcp-server --mode socket
+```
+
+**Security note:** the TCP socket has no authentication. Only expose it on a trusted LAN — never bind to `0.0.0.0` on a host reachable from the public internet.
 
 ### 3. Verify
 

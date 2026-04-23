@@ -1493,7 +1493,6 @@ class CommandHandler:
 
         return {"exported": True, "file_path": file_path}
 
-<<<<<<< HEAD
     # ── view sheet ─────────────────────────────────────────────────────
     # Render canonical views (iso/front/top/right/...) as PNGs and emit
     # a self-contained HTML page suitable for print-to-PDF. Intended

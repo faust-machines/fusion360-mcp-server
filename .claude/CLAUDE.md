@@ -4,7 +4,7 @@
 
 An MCP server that bridges Claude Code to Autodesk Fusion 360 for CAD automation. Two components:
 
-1. **This repo** — Python MCP server (stdio transport, 80 tools). Claude talks to this.
+1. **This repo** — Python MCP server (stdio transport, 81 tools). Claude talks to this.
 2. **Fusion360MCP add-in** — installed in Fusion's AddIns folder. Listens on `localhost:9876`.
 
 The MCP server receives tool calls from Claude, forwards them as JSON over TCP to the add-in, and returns results.
@@ -19,7 +19,7 @@ Claude Code ←(stdio MCP)→ This Server ←(TCP :9876)→ Fusion360MCP Add-in 
 
 ```bash
 uv sync --dev      # install deps
-uv run pytest -v   # run tests (245 tests)
+uv run pytest -v   # run tests (275 tests)
 uv run ruff check  # lint
 ```
 
@@ -27,9 +27,10 @@ uv run ruff check  # lint
 
 - `src/fusion360_mcp/server.py` — MCP server entry point (click CLI), resources, prompts
 - `src/fusion360_mcp/connection.py` — TCP client to Fusion add-in
-- `src/fusion360_mcp/tools.py` — 80 tool definitions with annotations
+- `src/fusion360_mcp/tools.py` — 81 tool definitions with annotations
+- `src/fusion360_mcp/hints.py` — error-classification table (mirror of `addon/server/hints.py`)
 - `src/fusion360_mcp/mock.py` — mock responses for `--mode mock` testing
-- `tests/` — 245 tests covering tools, mock handlers, server routing, connection, annotations
+- `tests/` — 275 tests covering tools, mock handlers, server routing, connection, annotations
 
 ## Adding a new command
 

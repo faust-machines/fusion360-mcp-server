@@ -4,21 +4,105 @@ Mock responses for every Fusion 360 MCP command.
 Used when the server is started with ``--mode mock`` so the full
 tool→response pipeline can be tested without a running Fusion instance.
 Every response includes ``"mode": "mock"`` so callers know it's simulated.
+
+The envelope matches the real addon: success results carry ``ok: True``,
+mutation results carry a ``deltas`` sub-dict, and an ``__mock_error__``
+sentinel in params forces a classified error response for tests.
 """
 
 from typing import Any
 
+from .hints import classify as _classify
+
+# Mutation commands that get a synthetic deltas payload in mock mode.
+# Keep in sync with CommandHandler._MUTATION_COMMANDS in the addon.
+_MUTATION_MOCKS: frozenset[str] = frozenset(
+    {
+        "extrude",
+        "revolve",
+        "sweep",
+        "loft",
+        "fillet",
+        "chamfer",
+        "shell",
+        "mirror",
+        "create_hole",
+        "rectangular_pattern",
+        "circular_pattern",
+        "create_thread",
+        "draft_faces",
+        "split_body",
+        "split_face",
+        "offset_faces",
+        "scale_body",
+        "suppress_feature",
+        "unsuppress_feature",
+        "move_body",
+        "boolean_operation",
+        "create_box",
+        "create_cylinder",
+        "create_sphere",
+        "create_torus",
+        "thicken_surface",
+        "patch_surface",
+        "stitch_surfaces",
+        "ruled_surface",
+        "trim_surface",
+        "create_flange",
+        "create_bend",
+        "flat_pattern",
+        "unfold",
+        "delete_all",
+        "undo",
+        "set_parameter",
+        "execute_code",
+    }
+)
+
+_MOCK_DELTAS = {
+    "body_count_before": 0,
+    "body_count_after": 1,
+    "body_count_delta": 1,
+    "mass_g_before": 0.0,
+    "mass_g_after": 10.0,
+    "mass_g_delta": 10.0,
+    "bbox_before": None,
+    "bbox_after": {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]},
+}
+
 
 def mock_command(command_type: str, params: dict[str, Any] | None = None) -> dict:
-    """Return a plausible mock response for *command_type*."""
+    """Return a plausible mock response for *command_type*.
+
+    If *params* contains ``__mock_error__`` (a string message), the response
+    simulates an addon-side failure: ``ok: False`` plus a classified
+    ``error_kind`` and contextual ``hints``.
+    """
     params = params or {}
+
+    forced = params.get("__mock_error__")
+    if forced is not None:
+        kind, hint_list = _classify(str(forced))
+        return {
+            "ok": False,
+            "error_kind": kind,
+            "error_message": str(forced),
+            "hints": hint_list,
+            "traceback": f"MockError: {forced}",
+            "mode": "mock",
+        }
+
     handler = _DISPATCH.get(command_type, _default_mock)
     result = handler(params)
+    result.setdefault("ok", True)
+    if command_type in _MUTATION_MOCKS and "deltas" not in result:
+        result["deltas"] = dict(_MOCK_DELTAS)
     result["mode"] = "mock"
     return result
 
 
 # ── individual mock handlers ──────────────────────────────────────────
+
 
 def _ping(_p: dict) -> dict:
     return {"status": "pong"}
@@ -149,6 +233,7 @@ def _execute_code(p: dict) -> dict:
 
 # ── design type safety ───────────────────────────────────────────────
 
+
 def _get_design_type(_p: dict) -> dict:
     return {"design_type": "parametric", "design_type_id": 1}
 
@@ -159,6 +244,7 @@ def _set_design_type(p: dict) -> dict:
 
 
 # ── new geometry tools ────────────────────────────────────────────────
+
 
 def _sweep(p: dict) -> dict:
     return {
@@ -220,6 +306,7 @@ def _circular_pattern(p: dict) -> dict:
 
 # ── assembly tools ────────────────────────────────────────────────────
 
+
 def _create_component(p: dict) -> dict:
     return {
         "component_name": p.get("name", "Component1"),
@@ -247,6 +334,7 @@ def _list_components(_p: dict) -> dict:
 
 # ── export tools ──────────────────────────────────────────────────────
 
+
 def _export_step(p: dict) -> dict:
     name = p.get("body_name", "Body1")
     path = p.get("file_path", f"~/Desktop/{name}.step")
@@ -259,6 +347,7 @@ def _export_f3d(p: dict) -> dict:
 
 
 # ── parameter tools ───────────────────────────────────────────────────
+
 
 def _get_parameters(_p: dict) -> dict:
     return {
@@ -288,6 +377,7 @@ def _delete_parameter(p: dict) -> dict:
 
 # ── sketch constraints & dimensions ───────────────────────────────────
 
+
 def _add_constraint(p: dict) -> dict:
     return {
         "constraint_type": p.get("constraint_type", "coincident"),
@@ -308,6 +398,7 @@ def _add_dimension(p: dict) -> dict:
 
 # ── construction geometry ─────────────────────────────────────────────
 
+
 def _create_construction_plane(p: dict) -> dict:
     return {
         "plane_name": "ConstructionPlane_mock",
@@ -324,6 +415,7 @@ def _create_construction_axis(p: dict) -> dict:
 
 # ── splines ───────────────────────────────────────────────────────────
 
+
 def _draw_spline(p: dict) -> dict:
     return {
         "sketch_name": "Sketch_mock_xy",
@@ -333,6 +425,7 @@ def _draw_spline(p: dict) -> dict:
 
 
 # ── sketch curve operations ──────────────────────────────────────────
+
 
 def _offset_curve(p: dict) -> dict:
     return {
@@ -360,14 +453,13 @@ def _extend_curve(p: dict) -> dict:
 
 # ── advanced features ─────────────────────────────────────────────────
 
+
 def _create_thread(p: dict) -> dict:
     return {
         "body_name": p.get("body_name", "Body1"),
         "face_index": p.get("face_index", 0),
         "is_modeled": p.get("is_modeled", False),
-        "thread_designation": p.get(
-            "thread_designation", "M10x1.5"
-        ),
+        "thread_designation": p.get("thread_designation", "M10x1.5"),
     }
 
 
@@ -409,6 +501,7 @@ def _scale_body(p: dict) -> dict:
 
 # ── direct primitives ────────────────────────────────────────────────
 
+
 def _create_box(p: dict) -> dict:
     return {
         "body_name": "Box_mock",
@@ -443,6 +536,7 @@ def _create_torus(p: dict) -> dict:
 
 # ── assembly (extended) ──────────────────────────────────────────────
 
+
 def _create_as_built_joint(p: dict) -> dict:
     return {
         "component_one": p.get("component_one", "Comp1"),
@@ -460,6 +554,7 @@ def _create_rigid_group(p: dict) -> dict:
 
 
 # ── inspection / analysis ────────────────────────────────────────────
+
 
 def _measure_distance(p: dict) -> dict:
     return {
@@ -508,17 +603,17 @@ def _check_interference(p: dict) -> dict:
 
 # ── appearance ────────────────────────────────────────────────────────
 
+
 def _set_appearance(p: dict) -> dict:
     return {
         "target_name": p.get("target_name", "Body1"),
-        "appearance_name": p.get(
-            "appearance_name", "Steel - Satin"
-        ),
+        "appearance_name": p.get("appearance_name", "Steel - Satin"),
         "applied": True,
     }
 
 
 # ── project geometry ─────────────────────────────────────────────────
+
 
 def _project_geometry(p: dict) -> dict:
     return {
@@ -529,6 +624,7 @@ def _project_geometry(p: dict) -> dict:
 
 
 # ── timeline control ─────────────────────────────────────────────────
+
 
 def _suppress_feature(p: dict) -> dict:
     return {
@@ -545,6 +641,7 @@ def _unsuppress_feature(p: dict) -> dict:
 
 
 # ── surface operations ──────────────────────────────────────────────
+
 
 def _patch_surface(p: dict) -> dict:
     return {
@@ -589,6 +686,7 @@ def _trim_surface(p: dict) -> dict:
 
 # ── sheet metal ─────────────────────────────────────────────────────
 
+
 def _create_flange(p: dict) -> dict:
     return {
         "body_name": p.get("body_name", "SheetBody1"),
@@ -621,6 +719,7 @@ def _unfold(p: dict) -> dict:
 
 
 # ── CAM / manufacturing ─────────────────────────────────────────────
+
 
 def _cam_create_setup(p: dict) -> dict:
     return {
@@ -704,7 +803,28 @@ def _cam_get_operation_info(p: dict) -> dict:
     }
 
 
+# ── perception (viewport render) ─────────────────────────────────────
+
+# 1x1 transparent PNG, enough to exercise the image-content code path.
+_MOCK_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0l"
+    "EQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+)
+
+
+def _render_view(p: dict) -> dict:
+    return {
+        "view": p.get("view", "current"),
+        "width": int(p.get("width", 1024)),
+        "height": int(p.get("height", 768)),
+        "image_format": "png",
+        "image_base64": _MOCK_PNG_B64,
+        "bytes": len(_MOCK_PNG_B64),
+    }
+
+
 # ── default fallback ─────────────────────────────────────────────────
+
 
 def _default_mock(p: dict) -> dict:
     return {"warning": "no mock handler for this command", "params_received": p}
@@ -810,4 +930,6 @@ _DISPATCH: dict[str, Any] = {
     # design type safety
     "get_design_type": _get_design_type,
     "set_design_type": _set_design_type,
+    # perception
+    "render_view": _render_view,
 }

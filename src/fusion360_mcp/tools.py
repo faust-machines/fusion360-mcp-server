@@ -58,8 +58,8 @@ TOOLS: list[dict] = [
             "type": "object",
             "required": ["width", "height"],
             "properties": {
-                "width":    {"type": "number", "minimum": 0.001},
-                "height":   {"type": "number", "minimum": 0.001},
+                "width": {"type": "number", "minimum": 0.001},
+                "height": {"type": "number", "minimum": 0.001},
                 "origin_x": {"type": "number", "default": 0},
                 "origin_y": {"type": "number", "default": 0},
                 "origin_z": {"type": "number", "default": 0},
@@ -74,7 +74,7 @@ TOOLS: list[dict] = [
             "type": "object",
             "required": ["radius"],
             "properties": {
-                "radius":   {"type": "number", "minimum": 0.001},
+                "radius": {"type": "number", "minimum": 0.001},
                 "center_x": {"type": "number", "default": 0},
                 "center_y": {"type": "number", "default": 0},
                 "center_z": {"type": "number", "default": 0},
@@ -92,9 +92,9 @@ TOOLS: list[dict] = [
                 "start_x": {"type": "number"},
                 "start_y": {"type": "number"},
                 "start_z": {"type": "number", "default": 0},
-                "end_x":   {"type": "number"},
-                "end_y":   {"type": "number"},
-                "end_z":   {"type": "number", "default": 0},
+                "end_x": {"type": "number"},
+                "end_y": {"type": "number"},
+                "end_z": {"type": "number", "default": 0},
             },
         },
     },
@@ -107,7 +107,7 @@ TOOLS: list[dict] = [
             "type": "object",
             "required": ["height"],
             "properties": {
-                "height":        {"type": "number"},
+                "height": {"type": "number"},
                 "profile_index": {"type": "integer", "default": 0, "minimum": 0},
                 "operation": {
                     "type": "string",
@@ -130,11 +130,11 @@ TOOLS: list[dict] = [
             "type": "object",
             "required": ["angle"],
             "properties": {
-                "angle":            {"type": "number", "minimum": 0.1, "maximum": 360},
-                "profile_index":    {"type": "integer", "default": 0},
-                "axis_origin_x":    {"type": "number", "default": 0},
-                "axis_origin_y":    {"type": "number", "default": 0},
-                "axis_origin_z":    {"type": "number", "default": 0},
+                "angle": {"type": "number", "minimum": 0.1, "maximum": 360},
+                "profile_index": {"type": "integer", "default": 0},
+                "axis_origin_x": {"type": "number", "default": 0},
+                "axis_origin_y": {"type": "number", "default": 0},
+                "axis_origin_z": {"type": "number", "default": 0},
                 "axis_direction_x": {"type": "number", "default": 1},
                 "axis_direction_y": {"type": "number", "default": 0},
                 "axis_direction_z": {"type": "number", "default": 0},
@@ -154,7 +154,7 @@ TOOLS: list[dict] = [
             "type": "object",
             "required": ["radius"],
             "properties": {
-                "radius":    {"type": "number", "minimum": 0.001},
+                "radius": {"type": "number", "minimum": 0.001},
                 "body_name": {"type": "string", "description": "Body name (preferred)"},
                 "body_index": {"type": "integer", "default": 0},
                 "edge_selection": {
@@ -173,7 +173,7 @@ TOOLS: list[dict] = [
             "type": "object",
             "required": ["distance"],
             "properties": {
-                "distance":  {"type": "number", "minimum": 0.001},
+                "distance": {"type": "number", "minimum": 0.001},
                 "body_name": {"type": "string"},
                 "body_index": {"type": "integer", "default": 0},
                 "edge_selection": {
@@ -192,8 +192,8 @@ TOOLS: list[dict] = [
             "type": "object",
             "required": ["thickness"],
             "properties": {
-                "thickness":  {"type": "number", "minimum": 0.001},
-                "body_name":  {"type": "string"},
+                "thickness": {"type": "number", "minimum": 0.001},
+                "body_name": {"type": "string"},
                 "body_index": {"type": "integer", "default": 0},
                 "face_selection": {
                     "type": "string",
@@ -215,7 +215,7 @@ TOOLS: list[dict] = [
                     "type": "string",
                     "enum": ["xy", "yz", "xz"],
                 },
-                "body_name":  {"type": "string"},
+                "body_name": {"type": "string"},
                 "body_index": {"type": "integer", "default": 0},
             },
         },
@@ -261,7 +261,7 @@ TOOLS: list[dict] = [
             "required": ["target_body", "tool_body"],
             "properties": {
                 "target_body": {"type": "string"},
-                "tool_body":   {"type": "string"},
+                "tool_body": {"type": "string"},
                 "operation": {
                     "type": "string",
                     "enum": ["join", "cut", "intersect"],
@@ -362,8 +362,11 @@ TOOLS: list[dict] = [
             "required": ["sides", "radius"],
             "properties": {
                 "sides": {"type": "integer", "minimum": 3, "maximum": 64},
-                "radius": {"type": "number", "minimum": 0.001,
-                           "description": "Circumradius (cm)"},
+                "radius": {
+                    "type": "number",
+                    "minimum": 0.001,
+                    "description": "Circumradius (cm)",
+                },
                 "center_x": {"type": "number", "default": 0},
                 "center_y": {"type": "number", "default": 0},
                 "center_z": {"type": "number", "default": 0},
@@ -374,8 +377,7 @@ TOOLS: list[dict] = [
         "name": "draw_arc",
         "title": "Draw Arc",
         "description": (
-            "Draw an arc in the most recent sketch "
-            "(center + start point + sweep angle)"
+            "Draw an arc in the most recent sketch (center + start point + sweep angle)"
         ),
         "inputSchema": {
             "type": "object",
@@ -428,11 +430,17 @@ TOOLS: list[dict] = [
             "properties": {
                 "body_name": {"type": "string"},
                 "x_count": {"type": "integer", "minimum": 1, "default": 1},
-                "x_spacing": {"type": "number", "default": 1.0,
-                              "description": "Spacing between columns (cm)"},
+                "x_spacing": {
+                    "type": "number",
+                    "default": 1.0,
+                    "description": "Spacing between columns (cm)",
+                },
                 "y_count": {"type": "integer", "minimum": 1, "default": 1},
-                "y_spacing": {"type": "number", "default": 1.0,
-                              "description": "Spacing between rows (cm)"},
+                "y_spacing": {
+                    "type": "number",
+                    "default": 1.0,
+                    "description": "Spacing between rows (cm)",
+                },
             },
         },
     },
@@ -490,8 +498,15 @@ TOOLS: list[dict] = [
                 "component_two": {"type": "string"},
                 "joint_type": {
                     "type": "string",
-                    "enum": ["rigid", "revolute", "slider", "cylindrical",
-                             "pin_slot", "planar", "ball"],
+                    "enum": [
+                        "rigid",
+                        "revolute",
+                        "slider",
+                        "cylindrical",
+                        "pin_slot",
+                        "planar",
+                        "ball",
+                    ],
                     "default": "rigid",
                 },
             },
@@ -533,8 +548,7 @@ TOOLS: list[dict] = [
                 "file_path": {
                     "type": "string",
                     "description": (
-                        "Destination path "
-                        "(default: ~/Desktop/<design_name>.f3d)"
+                        "Destination path (default: ~/Desktop/<design_name>.f3d)"
                     ),
                 },
             },
@@ -608,10 +622,19 @@ TOOLS: list[dict] = [
                 "constraint_type": {
                     "type": "string",
                     "enum": [
-                        "coincident", "parallel", "perpendicular",
-                        "tangent", "equal", "fix", "midpoint",
-                        "concentric", "horizontal", "vertical",
-                        "symmetry", "collinear", "smooth",
+                        "coincident",
+                        "parallel",
+                        "perpendicular",
+                        "tangent",
+                        "equal",
+                        "fix",
+                        "midpoint",
+                        "concentric",
+                        "horizontal",
+                        "vertical",
+                        "symmetry",
+                        "collinear",
+                        "smooth",
                     ],
                 },
                 "entity_one": {
@@ -630,8 +653,7 @@ TOOLS: list[dict] = [
                 "symmetry_line": {
                     "type": "integer",
                     "description": (
-                        "Index of the symmetry line "
-                        "(only for symmetry constraint)"
+                        "Index of the symmetry line (only for symmetry constraint)"
                     ),
                     "minimum": 0,
                 },
@@ -657,8 +679,12 @@ TOOLS: list[dict] = [
                 "dimension_type": {
                     "type": "string",
                     "enum": [
-                        "distance", "horizontal", "vertical",
-                        "angular", "radial", "diameter",
+                        "distance",
+                        "horizontal",
+                        "vertical",
+                        "angular",
+                        "radial",
+                        "diameter",
                     ],
                 },
                 "value": {
@@ -697,16 +723,17 @@ TOOLS: list[dict] = [
                 "method": {
                     "type": "string",
                     "enum": [
-                        "offset", "angle", "midplane",
-                        "three_points", "tangent",
+                        "offset",
+                        "angle",
+                        "midplane",
+                        "three_points",
+                        "tangent",
                     ],
                 },
                 "plane": {
                     "type": "string",
                     "enum": ["xy", "yz", "xz"],
-                    "description": (
-                        "Reference plane (for offset/angle)"
-                    ),
+                    "description": ("Reference plane (for offset/angle)"),
                 },
                 "offset": {
                     "type": "number",
@@ -718,10 +745,7 @@ TOOLS: list[dict] = [
                 },
                 "edge_name": {
                     "type": "string",
-                    "description": (
-                        "Edge or axis to rotate around "
-                        "(for angle method)"
-                    ),
+                    "description": ("Edge or axis to rotate around (for angle method)"),
                 },
                 "plane_one": {
                     "type": "string",
@@ -768,8 +792,10 @@ TOOLS: list[dict] = [
                 "method": {
                     "type": "string",
                     "enum": [
-                        "two_points", "intersection",
-                        "edge", "perpendicular_at_point",
+                        "two_points",
+                        "intersection",
+                        "edge",
+                        "perpendicular_at_point",
                     ],
                 },
                 "point_one": {
@@ -787,16 +813,12 @@ TOOLS: list[dict] = [
                 "plane_one": {
                     "type": "string",
                     "enum": ["xy", "yz", "xz"],
-                    "description": (
-                        "First plane (for intersection)"
-                    ),
+                    "description": ("First plane (for intersection)"),
                 },
                 "plane_two": {
                     "type": "string",
                     "enum": ["xy", "yz", "xz"],
-                    "description": (
-                        "Second plane (for intersection)"
-                    ),
+                    "description": ("Second plane (for intersection)"),
                 },
                 "body_name": {
                     "type": "string",
@@ -836,18 +858,13 @@ TOOLS: list[dict] = [
                         "maxItems": 3,
                     },
                     "minItems": 2,
-                    "description": (
-                        "Array of [x,y] or [x,y,z] points"
-                    ),
+                    "description": ("Array of [x,y] or [x,y,z] points"),
                 },
                 "degree": {
                     "type": "integer",
                     "enum": [3, 5],
                     "default": 3,
-                    "description": (
-                        "Spline degree "
-                        "(only for control_points, 3 or 5)"
-                    ),
+                    "description": ("Spline degree (only for control_points, 3 or 5)"),
                 },
             },
         },
@@ -867,9 +884,7 @@ TOOLS: list[dict] = [
                 "curve_index": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": (
-                        "Index of a curve in the connected loop"
-                    ),
+                    "description": ("Index of a curve in the connected loop"),
                 },
                 "offset_distance": {
                     "type": "number",
@@ -888,9 +903,7 @@ TOOLS: list[dict] = [
                 },
                 "sketch_name": {
                     "type": "string",
-                    "description": (
-                        "Sketch name (default: most recent)"
-                    ),
+                    "description": ("Sketch name (default: most recent)"),
                 },
             },
         },
@@ -913,15 +926,11 @@ TOOLS: list[dict] = [
                 },
                 "point_x": {
                     "type": "number",
-                    "description": (
-                        "X near the segment to remove"
-                    ),
+                    "description": ("X near the segment to remove"),
                 },
                 "point_y": {
                     "type": "number",
-                    "description": (
-                        "Y near the segment to remove"
-                    ),
+                    "description": ("Y near the segment to remove"),
                 },
                 "sketch_name": {"type": "string"},
             },
@@ -959,10 +968,7 @@ TOOLS: list[dict] = [
     {
         "name": "create_thread",
         "title": "Create Thread",
-        "description": (
-            "Add threads to a cylindrical face "
-            "(cosmetic or modeled)"
-        ),
+        "description": ("Add threads to a cylindrical face (cosmetic or modeled)"),
         "inputSchema": {
             "type": "object",
             "required": ["body_name", "face_index"],
@@ -971,9 +977,7 @@ TOOLS: list[dict] = [
                 "face_index": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": (
-                        "Index of the cylindrical face"
-                    ),
+                    "description": ("Index of the cylindrical face"),
                 },
                 "is_internal": {
                     "type": "boolean",
@@ -991,9 +995,7 @@ TOOLS: list[dict] = [
                 "thread_designation": {
                     "type": "string",
                     "default": "M10x1.5",
-                    "description": (
-                        "Size designation (e.g. 'M10x1.5')"
-                    ),
+                    "description": ("Size designation (e.g. 'M10x1.5')"),
                 },
                 "thread_class": {
                     "type": "string",
@@ -1003,10 +1005,7 @@ TOOLS: list[dict] = [
                 "is_modeled": {
                     "type": "boolean",
                     "default": False,
-                    "description": (
-                        "True = physical geometry, "
-                        "False = cosmetic"
-                    ),
+                    "description": ("True = physical geometry, False = cosmetic"),
                 },
                 "is_full_length": {
                     "type": "boolean",
@@ -1016,8 +1015,7 @@ TOOLS: list[dict] = [
                 "thread_length": {
                     "type": "number",
                     "description": (
-                        "Thread length in cm "
-                        "(only if is_full_length=false)"
+                        "Thread length in cm (only if is_full_length=false)"
                     ),
                 },
             },
@@ -1056,9 +1054,7 @@ TOOLS: list[dict] = [
                 "is_tangent_chain": {
                     "type": "boolean",
                     "default": True,
-                    "description": (
-                        "Include tangent-connected faces"
-                    ),
+                    "description": ("Include tangent-connected faces"),
                 },
             },
         },
@@ -1076,10 +1072,7 @@ TOOLS: list[dict] = [
                     "type": "string",
                     "enum": ["xy", "yz", "xz"],
                     "default": "xy",
-                    "description": (
-                        "Plane to split with "
-                        "(or use splitting_body)"
-                    ),
+                    "description": ("Plane to split with (or use splitting_body)"),
                 },
                 "splitting_body": {
                     "type": "string",
@@ -1091,9 +1084,7 @@ TOOLS: list[dict] = [
                 "extend_tool": {
                     "type": "boolean",
                     "default": True,
-                    "description": (
-                        "Extend tool to cut through entire body"
-                    ),
+                    "description": ("Extend tool to cut through entire body"),
                 },
             },
         },
@@ -1110,10 +1101,7 @@ TOOLS: list[dict] = [
                 "face_indices": {
                     "type": "array",
                     "items": {"type": "integer", "minimum": 0},
-                    "description": (
-                        "Indices of faces to split "
-                        "(default: all faces)"
-                    ),
+                    "description": ("Indices of faces to split (default: all faces)"),
                 },
                 "splitting_plane": {
                     "type": "string",
@@ -1130,9 +1118,7 @@ TOOLS: list[dict] = [
     {
         "name": "offset_faces",
         "title": "Offset Faces",
-        "description": (
-            "Push/pull faces of a body by a distance"
-        ),
+        "description": ("Push/pull faces of a body by a distance"),
         "inputSchema": {
             "type": "object",
             "required": ["body_name", "distance"],
@@ -1140,10 +1126,7 @@ TOOLS: list[dict] = [
                 "body_name": {"type": "string"},
                 "distance": {
                     "type": "number",
-                    "description": (
-                        "Offset distance in cm "
-                        "(positive = outward)"
-                    ),
+                    "description": ("Offset distance in cm (positive = outward)"),
                 },
                 "face_selection": {
                     "type": "string",
@@ -1154,10 +1137,7 @@ TOOLS: list[dict] = [
                 "face_indices": {
                     "type": "array",
                     "items": {"type": "integer", "minimum": 0},
-                    "description": (
-                        "Specific face indices "
-                        "(overrides face_selection)"
-                    ),
+                    "description": ("Specific face indices (overrides face_selection)"),
                 },
             },
         },
@@ -1179,9 +1159,7 @@ TOOLS: list[dict] = [
                 "scale_x": {
                     "type": "number",
                     "minimum": 0.001,
-                    "description": (
-                        "X scale (overrides uniform scale)"
-                    ),
+                    "description": ("X scale (overrides uniform scale)"),
                 },
                 "scale_y": {
                     "type": "number",
@@ -1216,8 +1194,7 @@ TOOLS: list[dict] = [
         "name": "create_box",
         "title": "Create Box",
         "description": (
-            "Create a box primitive "
-            "(non-parametric via TemporaryBRepManager)"
+            "Create a box primitive (non-parametric via TemporaryBRepManager)"
         ),
         "inputSchema": {
             "type": "object",
@@ -1236,8 +1213,7 @@ TOOLS: list[dict] = [
         "name": "create_cylinder",
         "title": "Create Cylinder",
         "description": (
-            "Create a cylinder primitive "
-            "(non-parametric via TemporaryBRepManager)"
+            "Create a cylinder primitive (non-parametric via TemporaryBRepManager)"
         ),
         "inputSchema": {
             "type": "object",
@@ -1261,8 +1237,7 @@ TOOLS: list[dict] = [
         "name": "create_sphere",
         "title": "Create Sphere",
         "description": (
-            "Create a sphere primitive "
-            "(non-parametric via TemporaryBRepManager)"
+            "Create a sphere primitive (non-parametric via TemporaryBRepManager)"
         ),
         "inputSchema": {
             "type": "object",
@@ -1279,8 +1254,7 @@ TOOLS: list[dict] = [
         "name": "create_torus",
         "title": "Create Torus",
         "description": (
-            "Create a torus primitive "
-            "(non-parametric via TemporaryBRepManager)"
+            "Create a torus primitive (non-parametric via TemporaryBRepManager)"
         ),
         "inputSchema": {
             "type": "object",
@@ -1318,7 +1292,9 @@ TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "required": [
-                "component_one", "component_two", "joint_type",
+                "component_one",
+                "component_two",
+                "joint_type",
             ],
             "properties": {
                 "component_one": {"type": "string"},
@@ -1326,9 +1302,13 @@ TOOLS: list[dict] = [
                 "joint_type": {
                     "type": "string",
                     "enum": [
-                        "rigid", "revolute", "slider",
-                        "cylindrical", "pin_slot",
-                        "planar", "ball",
+                        "rigid",
+                        "revolute",
+                        "slider",
+                        "cylindrical",
+                        "pin_slot",
+                        "planar",
+                        "ball",
                     ],
                     "default": "rigid",
                 },
@@ -1352,9 +1332,7 @@ TOOLS: list[dict] = [
                 "include_children": {
                     "type": "boolean",
                     "default": True,
-                    "description": (
-                        "Include child sub-components"
-                    ),
+                    "description": ("Include child sub-components"),
                 },
             },
         },
@@ -1363,9 +1341,7 @@ TOOLS: list[dict] = [
     {
         "name": "measure_distance",
         "title": "Measure Distance",
-        "description": (
-            "Measure minimum distance between two entities"
-        ),
+        "description": ("Measure minimum distance between two entities"),
         "inputSchema": {
             "type": "object",
             "required": ["entity_one", "entity_two"],
@@ -1373,8 +1349,7 @@ TOOLS: list[dict] = [
                 "entity_one": {
                     "type": "string",
                     "description": (
-                        "First entity name "
-                        "(body, sketch, or point 'x,y,z')"
+                        "First entity name (body, sketch, or point 'x,y,z')"
                     ),
                 },
                 "entity_two": {
@@ -1407,8 +1382,7 @@ TOOLS: list[dict] = [
         "name": "get_physical_properties",
         "title": "Get Physical Properties",
         "description": (
-            "Get mass, volume, surface area, center of mass, "
-            "and density of a body"
+            "Get mass, volume, surface area, center of mass, and density of a body"
         ),
         "inputSchema": {
             "type": "object",
@@ -1446,9 +1420,7 @@ TOOLS: list[dict] = [
     {
         "name": "check_interference",
         "title": "Check Interference",
-        "description": (
-            "Detect collisions between components/bodies"
-        ),
+        "description": ("Detect collisions between components/bodies"),
         "inputSchema": {
             "type": "object",
             "required": ["component_names"],
@@ -1457,16 +1429,12 @@ TOOLS: list[dict] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "minItems": 2,
-                    "description": (
-                        "Names of components to check"
-                    ),
+                    "description": ("Names of components to check"),
                 },
                 "include_coincident_faces": {
                     "type": "boolean",
                     "default": False,
-                    "description": (
-                        "Count touching faces as interference"
-                    ),
+                    "description": ("Count touching faces as interference"),
                 },
             },
         },
@@ -1503,9 +1471,7 @@ TOOLS: list[dict] = [
                 "face_index": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": (
-                        "Face index (if target_type=face)"
-                    ),
+                    "description": ("Face index (if target_type=face)"),
                 },
             },
         },
@@ -1514,32 +1480,23 @@ TOOLS: list[dict] = [
     {
         "name": "project_geometry",
         "title": "Project Geometry",
-        "description": (
-            "Project edges or bodies onto the active sketch plane"
-        ),
+        "description": ("Project edges or bodies onto the active sketch plane"),
         "inputSchema": {
             "type": "object",
             "required": ["source_name"],
             "properties": {
                 "source_name": {
                     "type": "string",
-                    "description": (
-                        "Name of body or edge to project"
-                    ),
+                    "description": ("Name of body or edge to project"),
                 },
                 "is_linked": {
                     "type": "boolean",
                     "default": True,
-                    "description": (
-                        "True = parametrically linked "
-                        "to source geometry"
-                    ),
+                    "description": ("True = parametrically linked to source geometry"),
                 },
                 "sketch_name": {
                     "type": "string",
-                    "description": (
-                        "Target sketch (default: most recent)"
-                    ),
+                    "description": ("Target sketch (default: most recent)"),
                 },
             },
         },
@@ -1573,9 +1530,7 @@ TOOLS: list[dict] = [
     {
         "name": "patch_surface",
         "title": "Patch Surface",
-        "description": (
-            "Create a patch surface from boundary edges"
-        ),
+        "description": ("Create a patch surface from boundary edges"),
         "inputSchema": {
             "type": "object",
             "required": ["sketch_name"],
@@ -1600,9 +1555,7 @@ TOOLS: list[dict] = [
     {
         "name": "stitch_surfaces",
         "title": "Stitch Surfaces",
-        "description": (
-            "Stitch surface bodies into a single body"
-        ),
+        "description": ("Stitch surface bodies into a single body"),
         "inputSchema": {
             "type": "object",
             "required": ["body_names"],
@@ -1645,9 +1598,7 @@ TOOLS: list[dict] = [
     {
         "name": "ruled_surface",
         "title": "Ruled Surface",
-        "description": (
-            "Create a ruled surface from an edge or sketch curve"
-        ),
+        "description": ("Create a ruled surface from an edge or sketch curve"),
         "inputSchema": {
             "type": "object",
             "required": ["body_name", "edge_index"],
@@ -1693,9 +1644,7 @@ TOOLS: list[dict] = [
     {
         "name": "create_flange",
         "title": "Create Flange",
-        "description": (
-            "Create a sheet metal flange on an edge"
-        ),
+        "description": ("Create a sheet metal flange on an edge"),
         "inputSchema": {
             "type": "object",
             "required": ["body_name", "edge_index"],
@@ -1750,9 +1699,7 @@ TOOLS: list[dict] = [
     {
         "name": "flat_pattern",
         "title": "Flat Pattern",
-        "description": (
-            "Create a flat pattern from a sheet metal body"
-        ),
+        "description": ("Create a flat pattern from a sheet metal body"),
         "inputSchema": {
             "type": "object",
             "required": ["body_name"],
@@ -1773,10 +1720,7 @@ TOOLS: list[dict] = [
                 "bend_indices": {
                     "type": "array",
                     "items": {"type": "integer", "minimum": 0},
-                    "description": (
-                        "Indices of bends to unfold "
-                        "(omit to unfold all)"
-                    ),
+                    "description": ("Indices of bends to unfold (omit to unfold all)"),
                 },
             },
         },
@@ -1852,12 +1796,21 @@ TOOLS: list[dict] = [
                 "strategy": {
                     "type": "string",
                     "enum": [
-                        "face", "2d_contour", "2d_pocket",
-                        "2d_adaptive", "3d_adaptive",
-                        "3d_pocket", "3d_contour",
-                        "3d_scallop", "3d_parallel",
-                        "drilling", "bore", "thread_milling",
-                        "slot", "trace", "engrave",
+                        "face",
+                        "2d_contour",
+                        "2d_pocket",
+                        "2d_adaptive",
+                        "3d_adaptive",
+                        "3d_pocket",
+                        "3d_contour",
+                        "3d_scallop",
+                        "3d_parallel",
+                        "drilling",
+                        "bore",
+                        "thread_milling",
+                        "slot",
+                        "trace",
+                        "engrave",
                     ],
                     "description": "Machining strategy",
                 },
@@ -1874,8 +1827,7 @@ TOOLS: list[dict] = [
                     "type": "number",
                     "minimum": 0.001,
                     "description": (
-                        "Tool diameter (cm) — used if "
-                        "tool_number not specified"
+                        "Tool diameter (cm) — used if tool_number not specified"
                     ),
                 },
                 "stepdown": {
@@ -1886,9 +1838,7 @@ TOOLS: list[dict] = [
                 "stepover": {
                     "type": "number",
                     "minimum": 0.001,
-                    "description": (
-                        "Radial stepover (cm)"
-                    ),
+                    "description": ("Radial stepover (cm)"),
                 },
                 "feed_rate": {
                     "type": "number",
@@ -1901,8 +1851,10 @@ TOOLS: list[dict] = [
                 "coolant": {
                     "type": "string",
                     "enum": [
-                        "disabled", "flood",
-                        "mist", "through_tool",
+                        "disabled",
+                        "flood",
+                        "mist",
+                        "through_tool",
                     ],
                     "default": "flood",
                 },
@@ -1913,24 +1865,18 @@ TOOLS: list[dict] = [
         "name": "cam_generate_toolpath",
         "title": "Generate Toolpath",
         "description": (
-            "Generate toolpaths for a specific operation "
-            "or all operations in a setup"
+            "Generate toolpaths for a specific operation or all operations in a setup"
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "setup_name": {
                     "type": "string",
-                    "description": (
-                        "Setup name (generates all its operations)"
-                    ),
+                    "description": ("Setup name (generates all its operations)"),
                 },
                 "operation_name": {
                     "type": "string",
-                    "description": (
-                        "Specific operation name "
-                        "(overrides setup_name)"
-                    ),
+                    "description": ("Specific operation name (overrides setup_name)"),
                 },
                 "generate_all": {
                     "type": "boolean",
@@ -1943,9 +1889,7 @@ TOOLS: list[dict] = [
     {
         "name": "cam_post_process",
         "title": "Post Process",
-        "description": (
-            "Post-process toolpaths to generate NC code (G-code)"
-        ),
+        "description": ("Post-process toolpaths to generate NC code (G-code)"),
         "inputSchema": {
             "type": "object",
             "required": ["setup_name"],
@@ -1956,10 +1900,7 @@ TOOLS: list[dict] = [
                 },
                 "operation_name": {
                     "type": "string",
-                    "description": (
-                        "Specific operation "
-                        "(omit to post all in setup)"
-                    ),
+                    "description": ("Specific operation (omit to post all in setup)"),
                 },
                 "post_processor": {
                     "type": "string",
@@ -1972,10 +1913,7 @@ TOOLS: list[dict] = [
                 },
                 "output_folder": {
                     "type": "string",
-                    "description": (
-                        "Output directory "
-                        "(default: ~/Desktop)"
-                    ),
+                    "description": ("Output directory (default: ~/Desktop)"),
                 },
                 "output_units": {
                     "type": "string",
@@ -1988,9 +1926,7 @@ TOOLS: list[dict] = [
     {
         "name": "cam_list_setups",
         "title": "List CAM Setups",
-        "description": (
-            "List all manufacturing setups in the document"
-        ),
+        "description": ("List all manufacturing setups in the document"),
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -1999,9 +1935,7 @@ TOOLS: list[dict] = [
     {
         "name": "cam_list_operations",
         "title": "List CAM Operations",
-        "description": (
-            "List operations within a setup"
-        ),
+        "description": ("List operations within a setup"),
         "inputSchema": {
             "type": "object",
             "required": ["setup_name"],
@@ -2033,8 +1967,7 @@ TOOLS: list[dict] = [
         "name": "ping",
         "title": "Ping",
         "description": (
-            "Health check — returns immediately "
-            "without touching Fusion API"
+            "Health check — returns immediately without touching Fusion API"
         ),
         "inputSchema": {
             "type": "object",
@@ -2074,6 +2007,57 @@ TOOLS: list[dict] = [
             },
         },
     },
+    # ── perception ──────────────────────────────────────────────────────
+    {
+        "name": "render_view",
+        "title": "Render Viewport",
+        "description": (
+            "Capture the active viewport as a PNG so you can visually verify "
+            "the model. Pass a canonical view (iso/front/top/etc.) to "
+            "reposition the camera first, or 'current' to keep it as is. "
+            "Returns base64-encoded image bytes alongside metadata; the MCP "
+            "server delivers it as an image content block."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "view": {
+                    "type": "string",
+                    "enum": [
+                        "current",
+                        "iso",
+                        "front",
+                        "back",
+                        "top",
+                        "bottom",
+                        "left",
+                        "right",
+                    ],
+                    "default": "current",
+                    "description": (
+                        "Camera preset; 'current' preserves the existing view"
+                    ),
+                },
+                "width": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 4096,
+                    "default": 1024,
+                },
+                "height": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 4096,
+                    "default": 768,
+                },
+                "fit": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Call Viewport.fit() before capture",
+                },
+            },
+        },
+    },
 ]
 
 # ── tool annotations ──────────────────────────────────────────────────
@@ -2081,24 +2065,40 @@ TOOLS: list[dict] = [
 # side-effect profile so MCP clients can auto-approve safe operations.
 
 _READ_ONLY = {
-    "get_scene_info", "get_object_info", "list_components",
-    "get_parameters", "get_physical_properties",
-    "measure_distance", "measure_angle",
-    "check_interference", "ping",
-    "cam_list_setups", "cam_list_operations",
+    "get_scene_info",
+    "get_object_info",
+    "list_components",
+    "get_parameters",
+    "get_physical_properties",
+    "measure_distance",
+    "measure_angle",
+    "check_interference",
+    "ping",
+    "cam_list_setups",
+    "cam_list_operations",
     "cam_get_operation_info",
     "get_design_type",
+    "render_view",
 }
 _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
-    "ping", "get_scene_info", "get_object_info",
-    "list_components", "get_parameters",
-    "get_physical_properties", "measure_distance",
-    "measure_angle", "check_interference",
-    "set_parameter", "set_appearance",
-    "cam_list_setups", "cam_list_operations",
+    "ping",
+    "get_scene_info",
+    "get_object_info",
+    "list_components",
+    "get_parameters",
+    "get_physical_properties",
+    "measure_distance",
+    "measure_angle",
+    "check_interference",
+    "set_parameter",
+    "set_appearance",
+    "cam_list_setups",
+    "cam_list_operations",
     "cam_get_operation_info",
-    "get_design_type", "set_design_type",
+    "get_design_type",
+    "set_design_type",
+    "render_view",
 }
 
 for _t in TOOLS:

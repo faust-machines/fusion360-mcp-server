@@ -15,7 +15,8 @@ def test_all_schemas_are_objects():
     for t in TOOLS:
         schema = t["inputSchema"]
         assert schema.get("type") == "object", (
-            f"Tool {t['name']} schema type is not 'object'")
+            f"Tool {t['name']} schema type is not 'object'"
+        )
 
 
 def test_required_fields_exist_in_properties():
@@ -27,13 +28,15 @@ def test_required_fields_exist_in_properties():
         for field in required:
             assert field in props, (
                 f"Tool {t['name']}: required field '{field}' "
-                f"not in properties {list(props)}")
+                f"not in properties {list(props)}"
+            )
 
 
 def test_no_duplicate_tool_names():
     names = [t["name"] for t in TOOLS]
     assert len(names) == len(set(names)), (
-        f"Duplicate tool names: {[n for n in names if names.count(n) > 1]}")
+        f"Duplicate tool names: {[n for n in names if names.count(n) > 1]}"
+    )
 
 
 def test_get_tool_list_returns_mcp_types():
@@ -58,64 +61,115 @@ def test_expected_tools_present():
     names = {t["name"] for t in TOOLS}
     expected = {
         # scene / query
-        "get_scene_info", "get_object_info",
+        "get_scene_info",
+        "get_object_info",
         # sketch
-        "create_sketch", "draw_rectangle", "draw_circle", "draw_line",
+        "create_sketch",
+        "draw_rectangle",
+        "draw_circle",
+        "draw_line",
         # features
-        "extrude", "revolve", "fillet", "chamfer", "shell", "mirror",
+        "extrude",
+        "revolve",
+        "fillet",
+        "chamfer",
+        "shell",
+        "mirror",
         # body ops
-        "move_body", "export_stl", "boolean_operation",
+        "move_body",
+        "export_stl",
+        "boolean_operation",
         # scene control
-        "delete_all", "undo",
+        "delete_all",
+        "undo",
         # code execution
         "execute_code",
         # health
         "ping",
         # new geometry
-        "sweep", "loft", "create_polygon", "draw_arc",
-        "create_hole", "rectangular_pattern", "circular_pattern",
+        "sweep",
+        "loft",
+        "create_polygon",
+        "draw_arc",
+        "create_hole",
+        "rectangular_pattern",
+        "circular_pattern",
         # assembly
-        "create_component", "add_joint", "list_components",
+        "create_component",
+        "add_joint",
+        "list_components",
         # export
-        "export_step", "export_f3d",
+        "export_step",
+        "export_f3d",
         # parameters
-        "get_parameters", "create_parameter", "set_parameter", "delete_parameter",
+        "get_parameters",
+        "create_parameter",
+        "set_parameter",
+        "delete_parameter",
         # sketch constraints & dimensions
-        "add_constraint", "add_dimension",
+        "add_constraint",
+        "add_dimension",
         # construction geometry
-        "create_construction_plane", "create_construction_axis",
+        "create_construction_plane",
+        "create_construction_axis",
         # splines
         "draw_spline",
         # sketch curve operations
-        "offset_curve", "trim_curve", "extend_curve",
+        "offset_curve",
+        "trim_curve",
+        "extend_curve",
         # advanced features
-        "create_thread", "draft_faces", "split_body", "split_face",
-        "offset_faces", "scale_body",
+        "create_thread",
+        "draft_faces",
+        "split_body",
+        "split_face",
+        "offset_faces",
+        "scale_body",
         # direct primitives
-        "create_box", "create_cylinder", "create_sphere", "create_torus",
+        "create_box",
+        "create_cylinder",
+        "create_sphere",
+        "create_torus",
         # assembly (extended)
-        "create_as_built_joint", "create_rigid_group",
+        "create_as_built_joint",
+        "create_rigid_group",
         # inspection / analysis
-        "measure_distance", "measure_angle", "get_physical_properties",
-        "create_section_analysis", "check_interference",
+        "measure_distance",
+        "measure_angle",
+        "get_physical_properties",
+        "create_section_analysis",
+        "check_interference",
         # appearance
         "set_appearance",
         # project geometry
         "project_geometry",
         # timeline control
-        "suppress_feature", "unsuppress_feature",
+        "suppress_feature",
+        "unsuppress_feature",
         # surface operations
-        "patch_surface", "stitch_surfaces", "thicken_surface",
-        "ruled_surface", "trim_surface",
+        "patch_surface",
+        "stitch_surfaces",
+        "thicken_surface",
+        "ruled_surface",
+        "trim_surface",
         # sheet metal
-        "create_flange", "create_bend", "flat_pattern", "unfold",
+        "create_flange",
+        "create_bend",
+        "flat_pattern",
+        "unfold",
         # CAM / manufacturing
-        "cam_create_setup", "cam_create_operation",
-        "cam_generate_toolpath", "cam_post_process",
-        "cam_list_setups", "cam_list_operations",
+        "cam_create_setup",
+        "cam_create_operation",
+        "cam_generate_toolpath",
+        "cam_post_process",
+        "cam_list_setups",
+        "cam_list_operations",
         "cam_get_operation_info",
         # design type safety
-        "get_design_type", "set_design_type",
+        "get_design_type",
+        "set_design_type",
+        # perception
+        "render_view",
     }
     missing = expected - names
     assert not missing, f"Missing tools: {missing}"
@@ -129,12 +183,8 @@ def test_all_tools_have_annotations():
         ann = t.get("annotations")
         assert ann is not None, f"Tool {t['name']} missing annotations"
         for key in ("readOnlyHint", "destructiveHint", "idempotentHint"):
-            assert key in ann, (
-                f"Tool {t['name']} missing annotation '{key}'"
-            )
-            assert isinstance(ann[key], bool), (
-                f"Tool {t['name']}.{key} should be bool"
-            )
+            assert key in ann, f"Tool {t['name']} missing annotation '{key}'"
+            assert isinstance(ann[key], bool), f"Tool {t['name']}.{key} should be bool"
 
 
 def test_property_types_are_valid():
@@ -145,8 +195,7 @@ def test_property_types_are_valid():
         for field, spec in props.items():
             if "type" in spec:
                 assert spec["type"] in valid_types, (
-                    f"Tool {t['name']}.{field}: "
-                    f"invalid type '{spec['type']}'"
+                    f"Tool {t['name']}.{field}: invalid type '{spec['type']}'"
                 )
 
 
@@ -159,9 +208,7 @@ def test_enum_fields_are_lists():
                 assert isinstance(spec["enum"], list), (
                     f"Tool {t['name']}.{field}: enum not a list"
                 )
-                assert len(spec["enum"]) > 0, (
-                    f"Tool {t['name']}.{field}: enum is empty"
-                )
+                assert len(spec["enum"]) > 0, f"Tool {t['name']}.{field}: enum is empty"
 
 
 def test_minimum_less_than_maximum():
@@ -182,14 +229,13 @@ def test_descriptions_are_nonempty():
         assert len(t["description"].strip()) > 0, (
             f"Tool {t['name']} has empty description"
         )
-        assert len(t["title"].strip()) > 0, (
-            f"Tool {t['name']} has empty title"
-        )
+        assert len(t["title"].strip()) > 0, f"Tool {t['name']} has empty title"
 
 
 def test_tool_names_are_snake_case():
     """Tool names should be snake_case."""
     import re
+
     for t in TOOLS:
         assert re.match(r"^[a-z][a-z0-9_]*$", t["name"]), (
             f"Tool name '{t['name']}' is not snake_case"
@@ -200,18 +246,14 @@ def test_get_tool_list_annotations_propagated():
     """MCP Tool objects should carry annotations."""
     tools = get_tool_list()
     for tool in tools:
-        assert tool.annotations is not None, (
-            f"MCP Tool {tool.name} missing annotations"
-        )
+        assert tool.annotations is not None, f"MCP Tool {tool.name} missing annotations"
 
 
 def test_get_tool_by_name_returns_correct_tool():
     """get_tool_by_name should return the exact matching tool."""
     for t in TOOLS:
         found = get_tool_by_name(t["name"])
-        assert found is t, (
-            f"get_tool_by_name('{t['name']}') returned wrong object"
-        )
+        assert found is t, f"get_tool_by_name('{t['name']}') returned wrong object"
 
 
 def test_get_tool_by_name_edge_cases():

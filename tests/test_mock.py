@@ -53,6 +53,17 @@ class TestMockSceneQuery:
         assert len(result["size"]) == 3
         assert len(result["center"]) == 3
 
+    def test_import_mesh(self):
+        result = mock_command("import_mesh", {
+            "file_path": "/tmp/wheel_arch.stl",
+            "units": "mm",
+        })
+        assert result["imported"] is True
+        assert result["file_path"] == "/tmp/wheel_arch.stl"
+        assert result["units"] == "mm"
+        assert "mesh_name" in result
+        assert "bounding_box" in result
+
 
 class TestMockSketch:
     def test_create_sketch(self):

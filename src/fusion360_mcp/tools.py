@@ -654,6 +654,38 @@ TOOLS: list[dict] = [
             },
         },
     },
+    # ── import ─────────────────────────────────────────────────────────
+    {
+        "name": "import_mesh",
+        "title": "Import Mesh",
+        "description": (
+            "Import a mesh file (STL, OBJ, or 3MF) as a mesh body. "
+            "Returns the mesh name and bounding box. "
+            "Use for reference geometry (e.g. exported SketchUp model)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["file_path"],
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to mesh file (.stl/.obj/.3mf)",
+                },
+                "component_name": {
+                    "type": "string",
+                    "description": (
+                        "Target component name (omit for root component)"
+                    ),
+                },
+                "units": {
+                    "type": "string",
+                    "enum": ["mm", "cm", "m", "in", "ft"],
+                    "default": "mm",
+                    "description": "Source mesh units (default: mm)",
+                },
+            },
+        },
+    },
     # ── parameters ─────────────────────────────────────────────────────
     {
         "name": "get_parameters",

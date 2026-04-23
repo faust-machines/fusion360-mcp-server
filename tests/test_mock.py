@@ -83,6 +83,22 @@ class TestMockSceneQuery:
         assert result["body_name"] == "BoxRechts"
         assert result["height"] == "boxH - wall_t"
 
+    def test_export_unified_infers_format(self):
+        result = mock_command("export", {
+            "body_name": "BoxRechts",
+            "file_path": "/tmp/BoxRechts.step",
+        })
+        assert result["exported"] is True
+        assert result["format"] == "step"
+        assert result["body"] == "BoxRechts"
+
+    def test_export_unified_explicit_format(self):
+        result = mock_command("export", {
+            "format": "stl",
+            "body_name": "Part1",
+        })
+        assert result["format"] == "stl"
+
 
 class TestMockSketch:
     def test_create_sketch(self):

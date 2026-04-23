@@ -103,6 +103,7 @@ def test_expected_tools_present():
         "export_step",
         "export_f3d",
         "export_view_sheet",
+        "export",
         # import
         "import_mesh",
         # parameters

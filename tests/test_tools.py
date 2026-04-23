@@ -77,7 +77,7 @@ def test_expected_tools_present():
         # assembly
         "create_component", "add_joint", "list_components",
         # export
-        "export_step", "export_f3d",
+        "export_step", "export_f3d", "export",
         # import
         "import_mesh",
         # parameters

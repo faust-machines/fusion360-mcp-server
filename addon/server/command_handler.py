@@ -85,6 +85,7 @@ class CommandHandler:
                 "export_stl":           self.export_stl,
                 "export_step":          self.export_step,
                 "export_f3d":           self.export_f3d,
+                "export":               self.export,
                 "import_mesh":          self.import_mesh,
                 "create_box_parametric": self.create_box_parametric,
                 "boolean_operation":    self.boolean_operation,
@@ -1205,6 +1206,30 @@ class CommandHandler:
         export_mgr.execute(f3d_opts)
 
         return {"exported": True, "file_path": file_path}
+
+    def export(self, format: str = None, body_name: str = None,
+               file_path: str = None):
+        """Unified export — dispatches to export_stl/export_step/export_f3d."""
+        fmt = format.lower() if format else None
+        if not fmt and file_path:
+            fmt = os.path.splitext(file_path)[1].lstrip(".").lower()
+        if not fmt:
+            raise RuntimeError(
+                "Specify format (stl/step/f3d) or file_path with extension")
+
+        if fmt == "stl":
+            if not body_name:
+                raise RuntimeError("body_name required for STL export")
+            return self.export_stl(body_name, file_path)
+        if fmt in ("step", "stp"):
+            if not body_name:
+                raise RuntimeError("body_name required for STEP export")
+            return self.export_step(body_name, file_path)
+        if fmt == "f3d":
+            return self.export_f3d(file_path)
+
+        raise RuntimeError(
+            f"Unknown format: {fmt}. Expected: stl, step, f3d")
 
     def import_mesh(self, file_path: str, component_name: str = None,
                     units: str = "mm"):

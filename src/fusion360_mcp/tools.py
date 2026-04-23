@@ -579,6 +579,39 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "export",
+        "title": "Export (unified)",
+        "description": (
+            "Unified export wrapper — dispatches to export_stl / export_step / "
+            "export_f3d based on format or file extension. "
+            "Format is auto-detected from file_path extension if not specified. "
+            "STL and STEP require body_name; F3D exports the whole design."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["stl", "step", "stp", "f3d"],
+                    "description": (
+                        "Output format. Inferred from file_path extension "
+                        "if omitted."
+                    ),
+                },
+                "body_name": {
+                    "type": "string",
+                    "description": "Body to export (required for stl/step)",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": (
+                        "Destination path (default: ~/Desktop/<name>.<ext>)"
+                    ),
+                },
+            },
+        },
+    },
     # ── import ─────────────────────────────────────────────────────────
     {
         "name": "import_mesh",

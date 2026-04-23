@@ -279,6 +279,20 @@ def _export_f3d(p: dict) -> dict:
     return {"file_path": path}
 
 
+def _export(p: dict) -> dict:
+    fmt = (p.get("format") or "").lower()
+    path = p.get("file_path", "")
+    if not fmt and path:
+        fmt = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    name = p.get("body_name", "Body1")
+    return {
+        "exported": True,
+        "format": fmt or "f3d",
+        "body": name,
+        "file_path": path or f"~/Desktop/{name}.{fmt or 'f3d'}",
+    }
+
+
 def _import_mesh(p: dict) -> dict:
     path = p.get("file_path", "/tmp/mesh.stl")
     units = p.get("units", "mm")
@@ -804,6 +818,7 @@ _DISPATCH: dict[str, Any] = {
     "list_components": _list_components,
     "export_step": _export_step,
     "export_f3d": _export_f3d,
+    "export": _export,
     "import_mesh": _import_mesh,
     "create_box_parametric": _create_box_parametric,
     "get_parameters": _get_parameters,

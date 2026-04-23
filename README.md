@@ -1,23 +1,10 @@
 # Fusion360 MCP Server
 
-> **Fork note** — This is a fork of [faust-machines/fusion360-mcp-server](https://github.com/faust-machines/fusion360-mcp-server) with four added tools oriented toward parametric box construction against imported reference meshes, plus cross-machine LAN support. Upstream credit for the architecture and 90 base tools goes to faust-machines. See [Fork additions](#fork-additions) below.
-
-> **Beta** — This project is under active development. APIs and tool behavior may change between releases. Use at your own discretion.
+> **Beta** — This project is under active development. APIs and tool behavior may change between releases. Use at your own discretion. Feedback and bug reports welcome via [GitHub Issues](https://github.com/faust-machines/fusion360-mcp-server/issues).
 
 MCP server that connects AI coding agents to Autodesk Fusion 360 for CAD automation.
 
 Tested with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Works with any MCP-compatible client — OpenCode, Codex, Cursor, or anything that speaks the [Model Context Protocol](https://modelcontextprotocol.io).
-
-## Fork additions
-
-Four new tools on top of upstream:
-
-- **`get_bounding_box`** — axis-aligned bounding box (min/max/size/center in cm) for a body or component. For components, unions contained bodies.
-- **`import_mesh`** — import STL/OBJ/3MF files as mesh bodies via `MeshBodies.addByFile()`. Unit-aware (`mm`/`cm`/`m`/`in`/`ft`). Use to bring in reference geometry from SketchUp or scanners.
-- **`create_box_parametric`** — history-based box via sketch rectangle + dimensions + extrude. `length`/`width`/`height` accept numbers (cm) or string expressions referencing User Parameters (e.g. `"boxL"`, `"outer - 2 * wall_t"`).
-- **`export`** — unified dispatcher around `export_stl` / `export_step` / `export_f3d`, with format inference from file extension.
-
-Plus LAN-host support for setups where the MCP server and Fusion run on different machines — see [Cross-machine setup](#cross-machine-setup-lan).
 
 ## How it works
 
@@ -134,7 +121,7 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 2. Stop the add-in in Fusion (Shift+S → Add-Ins → Fusion360MCP → Stop)
 3. Delete the add-in folder from Fusion's AddIns directory
 
-## Available Tools (84)
+## Available Tools (88)
 
 ### Scene & Query
 | Tool | Description |
@@ -142,6 +129,7 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 | `ping` | Health check (instant, no Fusion API) |
 | `get_scene_info` | Design name, bodies, sketches, features, camera |
 | `get_object_info` | Detailed info about a named body or sketch |
+| `get_bounding_box` | Axis-aligned bbox (min/max/size/center) for body or component; unions all bodies when called on a component |
 | `list_components` | List all components in the design |
 
 ### Design Type Safety
@@ -202,7 +190,8 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 ### Direct Primitives
 | Tool | Description |
 |------|-------------|
-| `create_box` | Box (via TemporaryBRepManager) |
+| `create_box` | Box (via TemporaryBRepManager, history-less) |
+| `create_box_parametric` | History-based box: sketch rectangle + dimensions + extrude. `length`/`width`/`height` accept numbers (cm) or string expressions referencing User Parameters (e.g. `"boxL"`, `"outer - 2*wall_t"`) |
 | `create_cylinder` | Cylinder |
 | `create_sphere` | Sphere |
 | `create_torus` | Torus |
@@ -260,12 +249,14 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 | `set_parameter` | Update a parameter value |
 | `delete_parameter` | Remove a parameter |
 
-### Export
+### Import / Export
 | Tool | Description |
 |------|-------------|
+| `import_mesh` | Import STL/OBJ/3MF as mesh body via `MeshBodies.addByFile()`. Unit-aware (`mm`/`cm`/`m`/`in`/`ft`). Returns the mesh name and bounding box |
 | `export_stl` | Export body as STL (supports bodies inside components) |
 | `export_step` | Export body as STEP (supports bodies inside components) |
 | `export_f3d` | Export design as Fusion archive |
+| `export` | Unified dispatcher — routes to `export_stl`/`export_step`/`export_f3d` based on explicit `format` or file-extension inference |
 
 ### CAM / Manufacturing
 | Tool | Description |

@@ -64,6 +64,25 @@ class TestMockSceneQuery:
         assert "mesh_name" in result
         assert "bounding_box" in result
 
+    def test_create_box_parametric_numeric(self):
+        result = mock_command("create_box_parametric", {
+            "length": 56, "width": 30, "height": 25,
+        })
+        assert result["created"] is True
+        assert result["length"] == 56
+        assert "body_name" in result
+        assert "sketch_name" in result
+
+    def test_create_box_parametric_expression(self):
+        result = mock_command("create_box_parametric", {
+            "length": "boxL",
+            "width": "boxW",
+            "height": "boxH - wall_t",
+            "body_name": "BoxRechts",
+        })
+        assert result["body_name"] == "BoxRechts"
+        assert result["height"] == "boxH - wall_t"
+
 
 class TestMockSketch:
     def test_create_sketch(self):

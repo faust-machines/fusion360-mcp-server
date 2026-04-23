@@ -156,6 +156,7 @@ class CommandHandler:
                 "export_f3d": self.export_f3d,
                 "export_view_sheet": self.export_view_sheet,
                 "import_mesh": self.import_mesh,
+                "create_box_parametric": self.create_box_parametric,
                 "boolean_operation": self.boolean_operation,
                 "delete_all": self.delete_all,
                 "undo": self.undo,
@@ -1850,6 +1851,96 @@ class CommandHandler:
         base_feat.finishEdit()
 
         return {"created": True, "length": length, "width": width, "height": height}
+
+    def create_box_parametric(self, length, width, height,
+                              origin_x: float = 0.0,
+                              origin_y: float = 0.0,
+                              origin_z: float = 0.0,
+                              plane: str = "xy",
+                              component_name: str = None,
+                              body_name: str = None):
+        """Parametric box: sketch rectangle + dimensions + extrude.
+
+        length/width/height may be numeric (cm) or string expressions
+        (e.g. 'boxL', '56 mm'). Expressions are applied via Fusion's
+        parameter system so later changes to User Parameters propagate.
+        """
+        comp = (self._component_by_name(component_name)
+                if component_name else self._root())
+
+        base_plane = self._construction_plane(plane)
+        if origin_z != 0:
+            plane_input = comp.constructionPlanes.createInput()
+            offset_val = adsk.core.ValueInput.createByReal(origin_z)
+            plane_input.setByOffset(base_plane, offset_val)
+            sketch_plane = comp.constructionPlanes.add(plane_input)
+        else:
+            sketch_plane = base_plane
+        sketch = comp.sketches.add(sketch_plane)
+
+        def _initial(val):
+            return float(val) if isinstance(val, (int, float)) else 1.0
+
+        p1 = adsk.core.Point3D.create(origin_x, origin_y, 0)
+        p2 = adsk.core.Point3D.create(
+            origin_x + _initial(length),
+            origin_y + _initial(width), 0)
+        rect = sketch.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2)
+
+        dims = sketch.sketchDimensions
+        text_pt = adsk.core.Point3D.create(0, 0, 0)
+
+        def _set_dim(dim, value):
+            if isinstance(value, (int, float)):
+                dim.parameter.value = float(value)
+            else:
+                dim.parameter.expression = str(value)
+
+        bottom = rect.item(0)
+        length_dim = dims.addDistanceDimension(
+            bottom.startSketchPoint, bottom.endSketchPoint,
+            adsk.fusion.DimensionOrientations.HorizontalDimensionOrientation,
+            text_pt)
+        _set_dim(length_dim, length)
+
+        right = rect.item(1)
+        width_dim = dims.addDistanceDimension(
+            right.startSketchPoint, right.endSketchPoint,
+            adsk.fusion.DimensionOrientations.VerticalDimensionOrientation,
+            text_pt)
+        _set_dim(width_dim, width)
+
+        if sketch.profiles.count == 0:
+            raise RuntimeError("Rectangle sketch produced no profile")
+        profile = sketch.profiles.item(0)
+
+        ext_feats = comp.features.extrudeFeatures
+        ext_input = ext_feats.createInput(
+            profile,
+            adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+        if isinstance(height, (int, float)):
+            h_vi = adsk.core.ValueInput.createByReal(float(height))
+        else:
+            h_vi = adsk.core.ValueInput.createByString(str(height))
+        ext_input.setDistanceExtent(False, h_vi)
+        feat = ext_feats.add(ext_input)
+
+        body = feat.bodies.item(0)
+        if body_name:
+            body.name = body_name
+
+        return {
+            "created": True,
+            "body_name": body.name,
+            "feature_name": feat.name,
+            "sketch_name": sketch.name,
+            "length": length,
+            "width": width,
+            "height": height,
+            "origin": [origin_x, origin_y, origin_z],
+            "plane": plane,
+            "component": comp.name,
+        }
 
     def create_cylinder(
         self,

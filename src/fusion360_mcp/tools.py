@@ -1342,6 +1342,64 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "create_box_parametric",
+        "title": "Create Parametric Box",
+        "description": (
+            "Create a history-based rectangular box via sketch rectangle + "
+            "extrude (unlike create_box which uses TemporaryBRepManager). "
+            "length/width/height accept a number (cm, Fusion internal unit) "
+            "or a string expression referencing User Parameters "
+            "(e.g. 'boxL', '56 mm', 'outer - 2 * wall_t'). "
+            "Call create_parameter first to define named parameters."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["length", "width", "height"],
+            "properties": {
+                "length": {
+                    "oneOf": [
+                        {"type": "number", "minimum": 0.001},
+                        {"type": "string"},
+                    ],
+                    "description": "Along sketch X: number (cm) or expression",
+                },
+                "width": {
+                    "oneOf": [
+                        {"type": "number", "minimum": 0.001},
+                        {"type": "string"},
+                    ],
+                    "description": "Along sketch Y: number (cm) or expression",
+                },
+                "height": {
+                    "oneOf": [
+                        {"type": "number", "minimum": 0.001},
+                        {"type": "string"},
+                    ],
+                    "description": "Extrude distance: number (cm) or expression",
+                },
+                "origin_x": {"type": "number", "default": 0},
+                "origin_y": {"type": "number", "default": 0},
+                "origin_z": {
+                    "type": "number", "default": 0,
+                    "description": "Z-offset of sketch plane (cm)",
+                },
+                "plane": {
+                    "type": "string",
+                    "enum": ["xy", "yz", "xz"],
+                    "default": "xy",
+                },
+                "component_name": {
+                    "type": "string",
+                    "description": "Target component (omit for root)",
+                },
+                "body_name": {
+                    "type": "string",
+                    "description": "Optional name for the resulting body",
+                },
+            },
+        },
+    },
+    {
         "name": "create_cylinder",
         "title": "Create Cylinder",
         "description": (

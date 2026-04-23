@@ -134,6 +134,7 @@ def test_expected_tools_present():
         "create_cylinder",
         "create_sphere",
         "create_torus",
+        "create_box_parametric",
         # assembly (extended)
         "create_as_built_joint",
         "create_rigid_group",

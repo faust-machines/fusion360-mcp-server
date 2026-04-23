@@ -30,6 +30,26 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "get_bounding_box",
+        "title": "Get Bounding Box",
+        "description": (
+            "Axis-aligned bounding box for a body or component by name. "
+            "Returns min, max, size, and center in cm (Fusion internal units). "
+            "For components, unions bounding boxes of all contained bodies. "
+            "Useful for measuring imported reference geometry."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Body or component name",
+                },
+            },
+        },
+    },
     # ── sketch ───────────────────────────────────────────────────────
     {
         "name": "create_sketch",
@@ -2100,7 +2120,8 @@ TOOLS: list[dict] = [
 # side-effect profile so MCP clients can auto-approve safe operations.
 
 _READ_ONLY = {
-    "get_scene_info", "get_object_info", "list_components",
+    "get_scene_info", "get_object_info", "get_bounding_box",
+    "list_components",
     "get_parameters", "get_physical_properties",
     "measure_distance", "measure_angle",
     "check_interference", "ping",
@@ -2111,6 +2132,7 @@ _READ_ONLY = {
 _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
     "ping", "get_scene_info", "get_object_info",
+    "get_bounding_box",
     "list_components", "get_parameters",
     "get_physical_properties", "measure_distance",
     "measure_angle", "check_interference",

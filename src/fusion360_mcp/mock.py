@@ -46,6 +46,19 @@ def _get_object_info(p: dict) -> dict:
     }
 
 
+def _get_bounding_box(p: dict) -> dict:
+    name = p.get("name", "Unknown")
+    return {
+        "found": True,
+        "type": "body",
+        "name": name,
+        "min": [0.0, 0.0, 0.0],
+        "max": [50.0, 30.0, 15.0],
+        "size": [50.0, 30.0, 15.0],
+        "center": [25.0, 15.0, 7.5],
+    }
+
+
 def _create_sketch(p: dict) -> dict:
     plane = p.get("plane", "xy")
     return {"sketch_name": f"Sketch_mock_{plane}", "plane": plane}
@@ -724,6 +737,7 @@ _DISPATCH: dict[str, Any] = {
     "ping": _ping,
     "get_scene_info": _get_scene_info,
     "get_object_info": _get_object_info,
+    "get_bounding_box": _get_bounding_box,
     "create_sketch": _create_sketch,
     "draw_rectangle": _draw_rectangle,
     "draw_circle": _draw_circle,

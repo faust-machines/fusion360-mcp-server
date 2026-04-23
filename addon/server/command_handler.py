@@ -43,6 +43,7 @@ class CommandHandler:
                 # scene / query
                 "get_scene_info":       self.get_scene_info,
                 "get_object_info":      self.get_object_info,
+                "get_bounding_box":     self.get_bounding_box,
                 "list_components":      self.list_components,
                 # sketch
                 "create_sketch":        self.create_sketch,
@@ -403,6 +404,58 @@ class CommandHandler:
                 "is_visible": occ.isVisible,
             })
         return {"components": components, "count": len(components)}
+
+    def get_bounding_box(self, name: str):
+        """Axis-aligned bounding box for a body or component. Values in cm."""
+        def _payload(obj_type, mn, mx):
+            return {
+                "found": True, "type": obj_type, "name": name,
+                "min": mn, "max": mx,
+                "size": [mx[i] - mn[i] for i in range(3)],
+                "center": [(mn[i] + mx[i]) / 2 for i in range(3)],
+            }
+
+        # Try body first (covers root bodies + bodies inside components)
+        try:
+            body = self._body_by_name(name)
+            bb = body.boundingBox
+            return _payload(
+                "body",
+                [bb.minPoint.x, bb.minPoint.y, bb.minPoint.z],
+                [bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z],
+            )
+        except RuntimeError:
+            pass
+
+        # Fall back to component: union bbox of all contained bodies
+        try:
+            comp = self._component_by_name(name)
+        except RuntimeError:
+            return {"found": False, "name": name}
+
+        mn = [float("inf")] * 3
+        mx = [float("-inf")] * 3
+
+        def _extend(bodies):
+            for i in range(bodies.count):
+                bb = bodies.item(i).boundingBox
+                lo = [bb.minPoint.x, bb.minPoint.y, bb.minPoint.z]
+                hi = [bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z]
+                for axis in range(3):
+                    if lo[axis] < mn[axis]:
+                        mn[axis] = lo[axis]
+                    if hi[axis] > mx[axis]:
+                        mx[axis] = hi[axis]
+
+        _extend(comp.bRepBodies)
+        for occ in comp.allOccurrences:
+            _extend(occ.bRepBodies)
+
+        if mn[0] == float("inf"):
+            return {"found": True, "type": "component",
+                    "name": name, "empty": True}
+
+        return _payload("component", mn, mx)
 
     # ------------------------------------------------------------------
     # Sketch

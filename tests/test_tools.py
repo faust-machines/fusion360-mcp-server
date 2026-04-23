@@ -58,7 +58,7 @@ def test_expected_tools_present():
     names = {t["name"] for t in TOOLS}
     expected = {
         # scene / query
-        "get_scene_info", "get_object_info",
+        "get_scene_info", "get_object_info", "get_bounding_box",
         # sketch
         "create_sketch", "draw_rectangle", "draw_circle", "draw_line",
         # features

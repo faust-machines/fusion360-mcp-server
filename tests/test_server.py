@@ -89,7 +89,8 @@ class TestToolAnnotations:
     def test_read_only_tools(self):
         from fusion360_mcp.tools import TOOLS
         read_only_names = {
-            "get_scene_info", "get_object_info", "list_components",
+            "get_scene_info", "get_object_info", "get_bounding_box",
+            "list_components",
             "get_parameters", "get_physical_properties",
             "measure_distance", "measure_angle",
             "check_interference", "ping",

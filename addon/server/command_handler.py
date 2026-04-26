@@ -84,6 +84,7 @@ class CommandHandler:
                 "export_stl":           self.export_stl,
                 "export_step":          self.export_step,
                 "export_f3d":           self.export_f3d,
+                "export_view_sheet":    self.export_view_sheet,
                 "boolean_operation":    self.boolean_operation,
                 "delete_all":           self.delete_all,
                 "undo":                 self.undo,
@@ -1150,6 +1151,231 @@ class CommandHandler:
         export_mgr.execute(f3d_opts)
 
         return {"exported": True, "file_path": file_path}
+
+    # ── view sheet ─────────────────────────────────────────────────────
+    # Render canonical views (iso/front/top/right/...) as PNGs and emit
+    # a self-contained HTML page suitable for print-to-PDF. Intended
+    # audience: mechanical engineers who want a quick sense of the part.
+
+    # Unit vectors per view: (eye_dir, up). Fusion's world is Z-up.
+    _VIEW_DIRS = {
+        "iso":    (( 1.0, -1.0,  1.0), (0.0, 0.0, 1.0)),
+        "iso_ne": (( 1.0,  1.0,  1.0), (0.0, 0.0, 1.0)),
+        "iso_nw": ((-1.0,  1.0,  1.0), (0.0, 0.0, 1.0)),
+        "iso_sw": ((-1.0, -1.0,  1.0), (0.0, 0.0, 1.0)),
+        "front":  (( 0.0, -1.0,  0.0), (0.0, 0.0, 1.0)),
+        "back":   (( 0.0,  1.0,  0.0), (0.0, 0.0, 1.0)),
+        "top":    (( 0.0,  0.0,  1.0), (0.0, 1.0, 0.0)),
+        "bottom": (( 0.0,  0.0, -1.0), (0.0, 1.0, 0.0)),
+        "right":  (( 1.0,  0.0,  0.0), (0.0, 0.0, 1.0)),
+        "left":   ((-1.0,  0.0,  0.0), (0.0, 0.0, 1.0)),
+    }
+
+    def _scene_center_and_radius(self):
+        """Return (center, radius) covering all visible root bodies."""
+        root = self._root()
+        minp = [float("inf")] * 3
+        maxp = [float("-inf")] * 3
+        found = False
+
+        def _grow(bb):
+            nonlocal found
+            for j, coord in enumerate(("x", "y", "z")):
+                minp[j] = min(minp[j], getattr(bb.minPoint, coord))
+                maxp[j] = max(maxp[j], getattr(bb.maxPoint, coord))
+            found = True
+
+        for i in range(root.bRepBodies.count):
+            b = root.bRepBodies.item(i)
+            if b.isVisible:
+                _grow(b.boundingBox)
+        for i in range(root.occurrences.count):
+            occ = root.occurrences.item(i)
+            if not occ.isVisible:
+                continue
+            for j in range(occ.bRepBodies.count):
+                b = occ.bRepBodies.item(j)
+                if b.isVisible:
+                    _grow(b.boundingBox)
+
+        if not found:
+            return (0.0, 0.0, 0.0), 10.0
+        center = tuple((minp[i] + maxp[i]) / 2 for i in range(3))
+        span = max(maxp[i] - minp[i] for i in range(3))
+        return center, max(span, 1.0)
+
+    def _apply_view(self, view_name: str, center, radius: float):
+        """Point the active viewport camera at *center* from *view_name*."""
+        dir_vec, up_vec = self._VIEW_DIRS[view_name]
+        length = math.sqrt(sum(c * c for c in dir_vec))
+        dist = radius * 3.0  # give fit() headroom
+        eye = tuple(
+            center[i] + dir_vec[i] / length * dist for i in range(3))
+        vp = self.app.activeViewport
+        cam = vp.camera
+        cam.isSmoothTransition = False
+        cam.cameraType = adsk.core.CameraTypes.OrthographicCameraType
+        cam.eye = adsk.core.Point3D.create(*eye)
+        cam.target = adsk.core.Point3D.create(*center)
+        cam.upVector = adsk.core.Vector3D.create(*up_vec)
+        cam.isFitView = True
+        vp.camera = cam
+        vp.refresh()
+        adsk.doEvents()
+
+    def export_view_sheet(self, title: str = None, notes: str = "",
+                          views: list = None, image_size: list = None,
+                          output_dir: str = None):
+        """Render canonical views as PNGs + a shareable HTML sheet.
+
+        Args:
+            title: heading on the sheet (default: document name).
+            notes: free-form text rendered below the views (newlines
+                preserved; HTML is escaped).
+            views: ordered list of view names. Valid: iso, iso_ne,
+                iso_nw, iso_sw, front, back, top, bottom, right, left.
+                Default: ["iso", "front", "top", "right"].
+            image_size: [width, height] in pixels (default [1200, 900]).
+            output_dir: destination folder
+                (default: ~/Desktop/<doc>_views_<timestamp>).
+        """
+        import base64
+        import html
+        import json as _json
+
+        design = self._design()
+        doc_name = design.parentDocument.name
+        sheet_title = title or doc_name
+        views = views or ["iso", "front", "top", "right"]
+        image_size = image_size or [1200, 900]
+        width, height = int(image_size[0]), int(image_size[1])
+
+        unknown = [v for v in views if v not in self._VIEW_DIRS]
+        if unknown:
+            raise RuntimeError(
+                f"Unknown views: {unknown}. "
+                f"Valid: {sorted(self._VIEW_DIRS)}"
+            )
+
+        if output_dir is None:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            output_dir = os.path.join(
+                os.path.expanduser("~"), "Desktop",
+                f"{doc_name}_views_{ts}",
+            )
+        os.makedirs(output_dir, exist_ok=True)
+
+        vp = self.app.activeViewport
+        orig = vp.camera
+        orig_state = {
+            "eye": (orig.eye.x, orig.eye.y, orig.eye.z),
+            "target": (orig.target.x, orig.target.y, orig.target.z),
+            "up": (orig.upVector.x, orig.upVector.y, orig.upVector.z),
+            "type": orig.cameraType,
+        }
+
+        center, radius = self._scene_center_and_radius()
+
+        rendered = []
+        try:
+            for view_name in views:
+                self._apply_view(view_name, center, radius)
+                png_path = os.path.join(output_dir, f"{view_name}.png")
+                vp.saveAsImageFile(png_path, width, height)
+                rendered.append({"view": view_name, "path": png_path})
+        finally:
+            cam = vp.camera
+            cam.isSmoothTransition = False
+            cam.cameraType = orig_state["type"]
+            cam.eye = adsk.core.Point3D.create(*orig_state["eye"])
+            cam.target = adsk.core.Point3D.create(*orig_state["target"])
+            cam.upVector = adsk.core.Vector3D.create(*orig_state["up"])
+            vp.camera = cam
+            vp.refresh()
+
+        # Build self-contained HTML with base64-embedded PNGs.
+        figures = []
+        for r in rendered:
+            with open(r["path"], "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+            label = r["view"].replace("_", " ").upper()
+            figures.append(
+                "<figure>"
+                f'<img src="data:image/png;base64,{b64}" alt="{label}">'
+                f"<figcaption>{label}</figcaption>"
+                "</figure>"
+            )
+
+        notes_block = ""
+        if notes:
+            notes_block = (
+                '<section class="notes"><h2>Notes</h2>'
+                f"<pre>{html.escape(notes)}</pre></section>"
+            )
+
+        timestamp = time.strftime("%Y-%m-%d %H:%M")
+        html_doc = f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>{html.escape(sheet_title)}</title>
+<style>
+  :root {{ color-scheme: light; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+           sans-serif; color: #111; max-width: 1400px;
+           margin: 2rem auto; padding: 0 2rem; }}
+  header {{ border-bottom: 1px solid #d0d0d0; padding-bottom: .75rem;
+            margin-bottom: 2rem; }}
+  header h1 {{ margin: 0; font-weight: 500; font-size: 1.6rem; }}
+  header .meta {{ color: #666; font-size: .85rem; margin-top: .25rem; }}
+  .views {{ display: grid; grid-template-columns: 1fr 1fr;
+            gap: 1.25rem; }}
+  figure {{ margin: 0; border: 1px solid #e0e0e0; padding: .5rem;
+            background: #fafafa; }}
+  figure img {{ width: 100%; display: block; background: #fff; }}
+  figcaption {{ text-align: center; font-size: .75rem; color: #555;
+                margin-top: .35rem; letter-spacing: .15em; }}
+  .notes {{ margin-top: 2rem; padding-top: 1rem;
+            border-top: 1px solid #e0e0e0; }}
+  .notes h2 {{ font-size: 1rem; font-weight: 500; margin: 0 0 .5rem; }}
+  .notes pre {{ font-family: inherit; white-space: pre-wrap;
+                margin: 0; color: #333; }}
+  @media print {{
+    body {{ max-width: none; margin: 0; padding: 1cm; }}
+    .views {{ gap: .5cm; }}
+    figure {{ break-inside: avoid; }}
+  }}
+</style>
+</head><body>
+<header>
+  <h1>{html.escape(sheet_title)}</h1>
+  <div class="meta">{html.escape(doc_name)} * {timestamp}</div>
+</header>
+<section class="views">{''.join(figures)}</section>
+{notes_block}
+</body></html>
+"""
+        html_path = os.path.join(output_dir, "view_sheet.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_doc)
+
+        # Sidecar manifest - machine-readable record of what was emitted.
+        manifest = {
+            "title": sheet_title,
+            "document": doc_name,
+            "views": rendered,
+            "html_path": html_path,
+            "image_size": [width, height],
+        }
+        with open(os.path.join(output_dir, "manifest.json"), "w") as f:
+            _json.dump(manifest, f, indent=2)
+
+        return {
+            "html_path": html_path,
+            "output_dir": output_dir,
+            "views": rendered,
+            "title": sheet_title,
+            "image_size": [width, height],
+        }
 
     def boolean_operation(self, target_body: str, tool_body: str,
                           operation: str = "join"):

@@ -559,6 +559,67 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "export_view_sheet",
+        "title": "Export View Sheet",
+        "description": (
+            "Render canonical orthographic + isometric views as PNGs and "
+            "emit a self-contained HTML sheet suitable for sharing with a "
+            "mechanical engineer. Opens in any browser; Print -> Save as "
+            "PDF for a static artifact. Restores the viewport camera "
+            "after rendering."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": (
+                        "Heading shown on the sheet "
+                        "(default: document name)."
+                    ),
+                },
+                "notes": {
+                    "type": "string",
+                    "description": (
+                        "Free-form notes rendered below the views. "
+                        "Newlines preserved; HTML is escaped."
+                    ),
+                },
+                "views": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "iso", "iso_ne", "iso_nw", "iso_sw",
+                            "front", "back", "top", "bottom",
+                            "right", "left",
+                        ],
+                    },
+                    "description": (
+                        "Ordered list of views to render "
+                        "(default: iso, front, top, right)."
+                    ),
+                },
+                "image_size": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": (
+                        "[width, height] in pixels (default [1200, 900])."
+                    ),
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": (
+                        "Destination folder "
+                        "(default: ~/Desktop/<doc>_views_<timestamp>)."
+                    ),
+                },
+            },
+        },
+    },
     # ── parameters ─────────────────────────────────────────────────────
     {
         "name": "get_parameters",

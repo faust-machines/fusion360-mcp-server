@@ -266,6 +266,20 @@ def _export_f3d(p: dict) -> dict:
     return {"file_path": path}
 
 
+def _export_view_sheet(p: dict) -> dict:
+    views = p.get("views") or ["iso", "front", "top", "right"]
+    size = p.get("image_size") or [1200, 900]
+    out = p.get("output_dir", "~/Desktop/MockDesign_views_mock")
+    title = p.get("title", "MockDesign")
+    return {
+        "html_path": f"{out}/view_sheet.html",
+        "output_dir": out,
+        "title": title,
+        "image_size": list(size),
+        "views": [{"view": v, "path": f"{out}/{v}.png"} for v in views],
+    }
+
+
 # ── parameter tools ───────────────────────────────────────────────────
 
 def _get_parameters(_p: dict) -> dict:
@@ -753,6 +767,7 @@ _DISPATCH: dict[str, Any] = {
     "list_components": _list_components,
     "export_step": _export_step,
     "export_f3d": _export_f3d,
+    "export_view_sheet": _export_view_sheet,
     "get_parameters": _get_parameters,
     "create_parameter": _create_parameter,
     "set_parameter": _set_parameter,

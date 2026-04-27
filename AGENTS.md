@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is an MCP server (80 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
+This is an MCP server (81 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
 
 1. **MCP Server** (this repo) — speaks MCP protocol over stdio, forwards commands to Fusion via TCP
 2. **Fusion 360 Add-in** — runs inside Fusion, executes commands on the main thread via CustomEvent bridge
@@ -154,13 +154,58 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 |------|-------------|
 | `execute_code` | Run arbitrary Python in Fusion (REPL-style) |
 
+### Perception
+| Tool | Description |
+|------|-------------|
+| `render_view` | Capture the active viewport as a PNG. Pass `view=iso\|front\|top\|...` to reposition the camera first. Returns an image content block you can visually inspect to validate geometry before committing to more operations. |
+
+## Response shape
+
+Every tool call returns a dict-shaped result with these conventions — read them instead of guessing whether an operation worked:
+
+**Success:**
+```json
+{
+  "ok": true,
+  "body_name": "Body1",   // tool-specific fields
+  ...,
+  "deltas": {             // present only for mutations
+    "body_count_before": 0,
+    "body_count_after":  1,
+    "body_count_delta":  1,
+    "mass_g_before": 0.0,
+    "mass_g_after":  7.85,
+    "mass_g_delta":  7.85,
+    "bbox_before": null,
+    "bbox_after":  {"min": [0,0,0], "max": [1,1,1]}
+  }
+}
+```
+
+**Failure (no exception — the error flows back as data):**
+```json
+{
+  "ok": false,
+  "error_kind":    "PROFILE_NOT_CLOSED",     // stable tag you can branch on
+  "error_message": "No profiles in sketch",  // short human-readable
+  "hints":  ["close the loop", "..."],        // contextual repair suggestions
+  "traceback": "..."                         // full traceback for debugging
+}
+```
+
+Known `error_kind` values: `PROFILE_NOT_CLOSED`, `SKETCH_NOT_FOUND`, `BODY_NOT_FOUND`, `SELF_INTERSECTION`, `REGEN_FAILED`, `BOOLEAN_NO_OP`, `INVALID_INPUT`, `NO_ACTIVE_DESIGN`, `DESIGN_TYPE_MISMATCH`, `TIMEOUT`, `UNKNOWN_COMMAND`, `UNKNOWN`.
+
+**Use the deltas to sanity-check without a render.** A `boolean_operation` that reports `body_count_delta: 0, mass_g_delta: 0` did nothing — follow up with `check_interference` before retrying. An `extrude` that shifts mass by three orders of magnitude is probably using the wrong units.
+
+**Use `render_view` sparingly** — it returns ~200KB–2MB of base64 image data. Render after a logical checkpoint (finished a feature, about to commit), not after every mutation. Deltas already tell you whether the feature *did* something; `render_view` tells you whether it did the *right* something.
+
 ## MCP protocol features
 
 - **Tool annotations** — every tool is tagged `readOnlyHint`, `destructiveHint`, `idempotentHint` so clients can auto-approve safe operations
 - **Resources** — `fusion360://status`, `fusion360://design`, `fusion360://parameters`
 - **Resource templates** — `fusion360://body/{name}`, `fusion360://component/{name}`
 - **Prompts** — `create-box`, `model-threaded-bolt`, `sheet-metal-enclosure` workflow templates
-- **Structured errors** — `isError=True` when the add-in reports failures
+- **Structured errors** — `isError=True` when the add-in reports failures. Error results carry `error_kind`, `hints`, and a traceback so the agent can branch on failure mode rather than parsing prose (see _Response shape_ above).
 - **Mock mode** — `--mode mock` returns test data without Fusion running
 
 ## Important constraints

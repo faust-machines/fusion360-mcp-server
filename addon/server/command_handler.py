@@ -7,9 +7,11 @@ is safe.
 """
 
 import ast
+import base64
 import io
 import math
 import os
+import tempfile
 import time
 import traceback
 from contextlib import redirect_stdout
@@ -19,6 +21,7 @@ import adsk.core
 import adsk.fusion
 
 from . import get_logger
+from . import hints as _hints
 
 log = get_logger("handler")
 
@@ -36,110 +39,178 @@ class CommandHandler:
 
     _COMMANDS = None  # populated lazily
 
+    # Canonical camera presets, (eye_dir, up_vec) in Fusion's Z-up world.
+    # Shared by render_view and export_view_sheet.
+    _VIEW_DIRS = {
+        "iso": ((1.0, -1.0, 1.0), (0.0, 0.0, 1.0)),
+        "iso_ne": ((1.0, 1.0, 1.0), (0.0, 0.0, 1.0)),
+        "iso_nw": ((-1.0, 1.0, 1.0), (0.0, 0.0, 1.0)),
+        "iso_sw": ((-1.0, -1.0, 1.0), (0.0, 0.0, 1.0)),
+        "front": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+        "back": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        "top": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
+        "bottom": ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
+        "right": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        "left": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+    }
+
+    # Commands that can change body mass / bbox / body count.  Only these
+    # get before/after snapshots so agents can sanity-check without a render.
+    _MUTATION_COMMANDS = frozenset(
+        {
+            # feature ops
+            "extrude",
+            "revolve",
+            "sweep",
+            "loft",
+            "fillet",
+            "chamfer",
+            "shell",
+            "mirror",
+            "create_hole",
+            "rectangular_pattern",
+            "circular_pattern",
+            "create_thread",
+            "draft_faces",
+            "split_body",
+            "split_face",
+            "offset_faces",
+            "scale_body",
+            "suppress_feature",
+            "unsuppress_feature",
+            # body ops
+            "move_body",
+            "boolean_operation",
+            # primitives
+            "create_box",
+            "create_cylinder",
+            "create_sphere",
+            "create_torus",
+            # surface / sheet metal (can produce / thicken bodies)
+            "thicken_surface",
+            "patch_surface",
+            "stitch_surfaces",
+            "ruled_surface",
+            "trim_surface",
+            "create_flange",
+            "create_bend",
+            "flat_pattern",
+            "unfold",
+            # scene-wide
+            "delete_all",
+            "undo",
+            # parametric & agent-authored changes
+            "set_parameter",
+            "execute_code",
+        }
+    )
+
     def execute_command(self, command: dict) -> dict:
         """Route *command* to the correct handler; return a response dict."""
         if self._COMMANDS is None:
             self.__class__._COMMANDS = {
                 # scene / query
-                "get_scene_info":       self.get_scene_info,
-                "get_object_info":      self.get_object_info,
-                "list_components":      self.list_components,
+                "get_scene_info": self.get_scene_info,
+                "get_object_info": self.get_object_info,
+                "list_components": self.list_components,
                 # sketch
-                "create_sketch":        self.create_sketch,
-                "draw_rectangle":       self.draw_rectangle,
-                "draw_circle":          self.draw_circle,
-                "draw_line":            self.draw_line,
-                "draw_arc":             self.draw_arc,
-                "draw_spline":          self.draw_spline,
-                "create_polygon":       self.create_polygon,
-                "add_constraint":       self.add_constraint,
-                "add_dimension":        self.add_dimension,
-                "offset_curve":         self.offset_curve,
-                "trim_curve":           self.trim_curve,
-                "extend_curve":         self.extend_curve,
-                "project_geometry":     self.project_geometry,
+                "create_sketch": self.create_sketch,
+                "draw_rectangle": self.draw_rectangle,
+                "draw_circle": self.draw_circle,
+                "draw_line": self.draw_line,
+                "draw_arc": self.draw_arc,
+                "draw_spline": self.draw_spline,
+                "create_polygon": self.create_polygon,
+                "add_constraint": self.add_constraint,
+                "add_dimension": self.add_dimension,
+                "offset_curve": self.offset_curve,
+                "trim_curve": self.trim_curve,
+                "extend_curve": self.extend_curve,
+                "project_geometry": self.project_geometry,
                 # features
-                "extrude":              self.extrude,
-                "revolve":              self.revolve,
-                "sweep":                self.sweep,
-                "loft":                 self.loft,
-                "fillet":               self.fillet,
-                "chamfer":              self.chamfer,
-                "shell":                self.shell,
-                "mirror":               self.mirror,
-                "create_hole":          self.create_hole,
-                "rectangular_pattern":  self.rectangular_pattern,
-                "circular_pattern":     self.circular_pattern,
-                "create_thread":        self.create_thread,
-                "draft_faces":          self.draft_faces,
-                "split_body":           self.split_body,
-                "split_face":           self.split_face,
-                "offset_faces":         self.offset_faces,
-                "scale_body":           self.scale_body,
-                "suppress_feature":     self.suppress_feature,
-                "unsuppress_feature":   self.unsuppress_feature,
+                "extrude": self.extrude,
+                "revolve": self.revolve,
+                "sweep": self.sweep,
+                "loft": self.loft,
+                "fillet": self.fillet,
+                "chamfer": self.chamfer,
+                "shell": self.shell,
+                "mirror": self.mirror,
+                "create_hole": self.create_hole,
+                "rectangular_pattern": self.rectangular_pattern,
+                "circular_pattern": self.circular_pattern,
+                "create_thread": self.create_thread,
+                "draft_faces": self.draft_faces,
+                "split_body": self.split_body,
+                "split_face": self.split_face,
+                "offset_faces": self.offset_faces,
+                "scale_body": self.scale_body,
+                "suppress_feature": self.suppress_feature,
+                "unsuppress_feature": self.unsuppress_feature,
                 # body operations
-                "move_body":            self.move_body,
-                "rename_body":          self.rename_body,
-                "export_stl":           self.export_stl,
-                "export_step":          self.export_step,
-                "export_f3d":           self.export_f3d,
-                "export_view_sheet":    self.export_view_sheet,
-                "boolean_operation":    self.boolean_operation,
-                "delete_all":           self.delete_all,
-                "undo":                 self.undo,
+                "move_body": self.move_body,
+                "rename_body": self.rename_body,
+                "export_stl": self.export_stl,
+                "export_step": self.export_step,
+                "export_f3d": self.export_f3d,
+                "export_view_sheet": self.export_view_sheet,
+                "boolean_operation": self.boolean_operation,
+                "delete_all": self.delete_all,
+                "undo": self.undo,
                 # direct primitives
-                "create_box":           self.create_box,
-                "create_cylinder":      self.create_cylinder,
-                "create_sphere":        self.create_sphere,
-                "create_torus":         self.create_torus,
+                "create_box": self.create_box,
+                "create_cylinder": self.create_cylinder,
+                "create_sphere": self.create_sphere,
+                "create_torus": self.create_torus,
                 # construction geometry
                 "create_construction_plane": self.create_construction_plane,
-                "create_construction_axis":  self.create_construction_axis,
+                "create_construction_axis": self.create_construction_axis,
                 # assembly
-                "create_component":     self.create_component,
-                "add_joint":            self.add_joint,
+                "create_component": self.create_component,
+                "add_joint": self.add_joint,
                 "create_as_built_joint": self.create_as_built_joint,
-                "create_rigid_group":   self.create_rigid_group,
+                "create_rigid_group": self.create_rigid_group,
                 # inspection / analysis
-                "measure_distance":     self.measure_distance,
-                "measure_angle":        self.measure_angle,
+                "measure_distance": self.measure_distance,
+                "measure_angle": self.measure_angle,
                 "get_physical_properties": self.get_physical_properties,
                 "create_section_analysis": self.create_section_analysis,
-                "check_interference":   self.check_interference,
+                "check_interference": self.check_interference,
                 # appearance
-                "set_appearance":       self.set_appearance,
+                "set_appearance": self.set_appearance,
                 # parameters
-                "get_parameters":       self.get_parameters,
-                "create_parameter":     self.create_parameter,
-                "set_parameter":        self.set_parameter,
-                "delete_parameter":     self.delete_parameter,
+                "get_parameters": self.get_parameters,
+                "create_parameter": self.create_parameter,
+                "set_parameter": self.set_parameter,
+                "delete_parameter": self.delete_parameter,
                 # surface operations
-                "patch_surface":        self.patch_surface,
-                "stitch_surfaces":      self.stitch_surfaces,
-                "thicken_surface":      self.thicken_surface,
-                "ruled_surface":        self.ruled_surface,
-                "trim_surface":         self.trim_surface,
+                "patch_surface": self.patch_surface,
+                "stitch_surfaces": self.stitch_surfaces,
+                "thicken_surface": self.thicken_surface,
+                "ruled_surface": self.ruled_surface,
+                "trim_surface": self.trim_surface,
                 # sheet metal
-                "create_flange":        self.create_flange,
-                "create_bend":          self.create_bend,
-                "flat_pattern":         self.flat_pattern,
-                "unfold":               self.unfold,
+                "create_flange": self.create_flange,
+                "create_bend": self.create_bend,
+                "flat_pattern": self.flat_pattern,
+                "unfold": self.unfold,
                 # code execution
-                "execute_code":         self.execute_code,
+                "execute_code": self.execute_code,
                 # CAM
-                "cam_list_setups":      self.cam_list_setups,
-                "cam_list_operations":  self.cam_list_operations,
+                "cam_list_setups": self.cam_list_setups,
+                "cam_list_operations": self.cam_list_operations,
                 "cam_get_operation_info": self.cam_get_operation_info,
-                "cam_create_setup":     self.cam_create_setup,
+                "cam_create_setup": self.cam_create_setup,
                 "cam_create_operation": self.cam_create_operation,
                 "cam_generate_toolpath": self.cam_generate_toolpath,
-                "cam_post_process":     self.cam_post_process,
+                "cam_post_process": self.cam_post_process,
                 # health
-                "ping":                 self.ping,
+                "ping": self.ping,
                 # design type safety
-                "get_design_type":      self.get_design_type,
-                "set_design_type":      self.set_design_type,
+                "get_design_type": self.get_design_type,
+                "set_design_type": self.set_design_type,
+                # perception
+                "render_view": self.render_view,
             }
 
         cmd_type = command.get("type")
@@ -147,18 +218,42 @@ class CommandHandler:
 
         handler = self._COMMANDS.get(cmd_type)
         if handler is None:
-            return {"status": "error",
-                    "message": f"Unknown command: {cmd_type}"}
+            # Infrastructure-level failure (not an application error) —
+            # keep the legacy error envelope so the client raises.
+            return {"status": "error", "message": f"Unknown command: {cmd_type}"}
+
+        is_mutation = cmd_type in self._MUTATION_COMMANDS
+        snap_before = self._snapshot() if is_mutation else None
+
         try:
             t0 = time.monotonic()
             result = handler(**params)
             elapsed = time.monotonic() - t0
             log.debug("%s completed in %.3fs", cmd_type, elapsed)
-            return {"status": "success", "result": result}
         except Exception as exc:
             log.error("%s raised: %s", cmd_type, exc)
-            return {"status": "error",
-                    "message": f"{exc}\n{traceback.format_exc()}"}
+            error_kind, hint_list = _hints.classify(exc)
+            return {
+                "status": "success",
+                "result": {
+                    "ok": False,
+                    "error_kind": error_kind,
+                    "error_message": str(exc) or exc.__class__.__name__,
+                    "hints": hint_list,
+                    "traceback": traceback.format_exc(),
+                },
+            }
+
+        if not isinstance(result, dict):
+            result = {"value": result}
+        result.setdefault("ok", True)
+
+        if is_mutation and snap_before is not None:
+            snap_after = self._snapshot()
+            if snap_after is not None:
+                result["deltas"] = self._compute_deltas(snap_before, snap_after)
+
+        return {"status": "success", "result": result}
 
     # ------------------------------------------------------------------
     # Helpers
@@ -239,15 +334,16 @@ class CommandHandler:
     @staticmethod
     def _operation_type(name: str):
         m = {
-            "new_body":   adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
-            "join":       adsk.fusion.FeatureOperations.JoinFeatureOperation,
-            "cut":        adsk.fusion.FeatureOperations.CutFeatureOperation,
-            "intersect":  adsk.fusion.FeatureOperations.IntersectFeatureOperation,
+            "new_body": adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+            "join": adsk.fusion.FeatureOperations.JoinFeatureOperation,
+            "cut": adsk.fusion.FeatureOperations.CutFeatureOperation,
+            "intersect": adsk.fusion.FeatureOperations.IntersectFeatureOperation,
         }
         t = m.get(name)
         if t is None:
             raise RuntimeError(
-                f"Unknown operation '{name}' — use new_body/join/cut/intersect")
+                f"Unknown operation '{name}' — use new_body/join/cut/intersect"
+            )
         return t
 
     def _select_edges(self, body, selection: str):
@@ -278,8 +374,8 @@ class CommandHandler:
                     coll.add(edge)
         else:
             raise RuntimeError(
-                f"Unknown edge_selection '{selection}' "
-                "— use all/top/bottom/vertical")
+                f"Unknown edge_selection '{selection}' — use all/top/bottom/vertical"
+            )
 
         if coll.count == 0:
             raise RuntimeError(f"No edges matched selection '{selection}'")
@@ -307,16 +403,15 @@ class CommandHandler:
             for face in body.faces:
                 # Check if face normal is roughly horizontal (vertical face)
                 try:
-                    _, normal_vec = face.evaluator.getNormalAtPoint(
-                        face.pointOnFace)
+                    _, normal_vec = face.evaluator.getNormalAtPoint(face.pointOnFace)
                     if abs(normal_vec.z) < 0.1:
                         coll.add(face)
                 except Exception:
                     pass
         else:
             raise RuntimeError(
-                f"Unknown face_selection '{selection}' "
-                "— use all/top/bottom/vertical")
+                f"Unknown face_selection '{selection}' — use all/top/bottom/vertical"
+            )
 
         if coll.count == 0:
             raise RuntimeError(f"No faces matched selection '{selection}'")
@@ -333,22 +428,26 @@ class CommandHandler:
         bodies = []
         for i in range(root.bRepBodies.count):
             b = root.bRepBodies.item(i)
-            bodies.append({
-                "name": b.name,
-                "volume": b.volume,
-                "area": b.area,
-                "material": b.material.name if b.material else None,
-                "is_visible": b.isVisible,
-            })
+            bodies.append(
+                {
+                    "name": b.name,
+                    "volume": b.volume,
+                    "area": b.area,
+                    "material": b.material.name if b.material else None,
+                    "is_visible": b.isVisible,
+                }
+            )
 
         sketches = []
         for i in range(root.sketches.count):
             s = root.sketches.item(i)
-            sketches.append({
-                "name": s.name,
-                "profile_count": s.profiles.count,
-                "is_visible": s.isVisible,
-            })
+            sketches.append(
+                {
+                    "name": s.name,
+                    "profile_count": s.profiles.count,
+                    "is_visible": s.isVisible,
+                }
+            )
 
         return {
             "design_name": design.parentDocument.name,
@@ -358,8 +457,9 @@ class CommandHandler:
             "bodies_count": root.bRepBodies.count,
             "sketches_count": root.sketches.count,
             "features_count": root.features.count,
-            "timeline_count": (design.timeline.count
-                               if hasattr(design, "timeline") else 0),
+            "timeline_count": (
+                design.timeline.count if hasattr(design, "timeline") else 0
+            ),
             "camera": self._camera_info(),
         }
 
@@ -371,8 +471,11 @@ class CommandHandler:
             b = root.bRepBodies.item(i)
             if b.name == name:
                 return {
-                    "found": True, "type": "body", "name": name,
-                    "volume": b.volume, "area": b.area,
+                    "found": True,
+                    "type": "body",
+                    "name": name,
+                    "volume": b.volume,
+                    "area": b.area,
                     "material": b.material.name if b.material else None,
                     "is_visible": b.isVisible,
                     "faces_count": b.faces.count,
@@ -386,7 +489,9 @@ class CommandHandler:
             s = root.sketches.item(i)
             if s.name == name:
                 return {
-                    "found": True, "type": "sketch", "name": name,
+                    "found": True,
+                    "type": "sketch",
+                    "name": name,
                     "is_visible": s.isVisible,
                     "profile_count": s.profiles.count,
                     "curve_count": s.sketchCurves.count,
@@ -398,11 +503,13 @@ class CommandHandler:
         root = self._root()
         components = [{"name": root.name, "is_root": True}]
         for occ in root.allOccurrences:
-            components.append({
-                "name": occ.component.name,
-                "is_root": False,
-                "is_visible": occ.isVisible,
-            })
+            components.append(
+                {
+                    "name": occ.component.name,
+                    "is_root": False,
+                    "is_visible": occ.isVisible,
+                }
+            )
         return {"components": components, "count": len(components)}
 
     # ------------------------------------------------------------------
@@ -423,48 +530,72 @@ class CommandHandler:
         else:
             sketch = root.sketches.add(self._construction_plane(plane))
 
-        return {"sketch_name": sketch.name, "plane": plane,
-                "z_offset": z_offset}
+        return {"sketch_name": sketch.name, "plane": plane, "z_offset": z_offset}
 
-    def draw_rectangle(self, width: float, height: float,
-                       origin_x: float = 0, origin_y: float = 0,
-                       origin_z: float = 0):
+    def draw_rectangle(
+        self,
+        width: float,
+        height: float,
+        origin_x: float = 0,
+        origin_y: float = 0,
+        origin_z: float = 0,
+    ):
         sketch = self._last_sketch()
         p1 = adsk.core.Point3D.create(origin_x, origin_y, origin_z)
-        p2 = adsk.core.Point3D.create(origin_x + width,
-                                       origin_y + height, origin_z)
+        p2 = adsk.core.Point3D.create(origin_x + width, origin_y + height, origin_z)
         sketch.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2)
         return {"sketch": sketch.name, "width": width, "height": height}
 
-    def draw_circle(self, radius: float,
-                    center_x: float = 0, center_y: float = 0,
-                    center_z: float = 0):
+    def draw_circle(
+        self,
+        radius: float,
+        center_x: float = 0,
+        center_y: float = 0,
+        center_z: float = 0,
+    ):
         sketch = self._last_sketch()
         c = adsk.core.Point3D.create(center_x, center_y, center_z)
         sketch.sketchCurves.sketchCircles.addByCenterRadius(c, radius)
-        return {"sketch": sketch.name, "radius": radius,
-                "center": [center_x, center_y, center_z]}
+        return {
+            "sketch": sketch.name,
+            "radius": radius,
+            "center": [center_x, center_y, center_z],
+        }
 
-    def draw_line(self, start_x: float, start_y: float,
-                  end_x: float, end_y: float,
-                  start_z: float = 0, end_z: float = 0):
+    def draw_line(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        start_z: float = 0,
+        end_z: float = 0,
+    ):
         sketch = self._last_sketch()
         sp = adsk.core.Point3D.create(start_x, start_y, start_z)
         ep = adsk.core.Point3D.create(end_x, end_y, end_z)
         sketch.sketchCurves.sketchLines.addByTwoPoints(sp, ep)
-        return {"sketch": sketch.name,
-                "start": [start_x, start_y, start_z],
-                "end": [end_x, end_y, end_z]}
+        return {
+            "sketch": sketch.name,
+            "start": [start_x, start_y, start_z],
+            "end": [end_x, end_y, end_z],
+        }
 
-    def draw_arc(self, center_x: float, center_y: float,
-                 start_x: float, start_y: float, sweep_angle: float,
-                 center_z: float = 0, start_z: float = 0):
+    def draw_arc(
+        self,
+        center_x: float,
+        center_y: float,
+        start_x: float,
+        start_y: float,
+        sweep_angle: float,
+        center_z: float = 0,
+        start_z: float = 0,
+    ):
         sketch = self._last_sketch()
         center = adsk.core.Point3D.create(center_x, center_y, center_z)
         start = adsk.core.Point3D.create(start_x, start_y, start_z)
         sweep_rad = math.radians(sweep_angle)
-        sketch.sketchCurves.sketchArcs.addByCenterStartSweep(
-            center, start, sweep_rad)
+        sketch.sketchCurves.sketchArcs.addByCenterStartSweep(center, start, sweep_rad)
         return {"sketch": sketch.name, "sweep_angle": sweep_angle}
 
     def draw_spline(self, spline_type: str, points: list, degree: int = 3):
@@ -478,12 +609,20 @@ class CommandHandler:
             sketch.sketchCurves.sketchFittedSplines.add(pts)
         else:  # control_points
             sketch.sketchCurves.sketchControlPointSplines.add(pts, degree)
-        return {"sketch": sketch.name, "spline_type": spline_type,
-                "points_count": len(points)}
+        return {
+            "sketch": sketch.name,
+            "spline_type": spline_type,
+            "points_count": len(points),
+        }
 
-    def create_polygon(self, sides: int, radius: float,
-                       center_x: float = 0, center_y: float = 0,
-                       center_z: float = 0):
+    def create_polygon(
+        self,
+        sides: int,
+        radius: float,
+        center_x: float = 0,
+        center_y: float = 0,
+        center_z: float = 0,
+    ):
         sketch = self._last_sketch()
         # Draw inscribed polygon
         for i in range(sides):
@@ -492,19 +631,27 @@ class CommandHandler:
             p1 = adsk.core.Point3D.create(
                 center_x + radius * math.cos(angle1),
                 center_y + radius * math.sin(angle1),
-                center_z)
+                center_z,
+            )
             p2 = adsk.core.Point3D.create(
                 center_x + radius * math.cos(angle2),
                 center_y + radius * math.sin(angle2),
-                center_z)
+                center_z,
+            )
             sketch.sketchCurves.sketchLines.addByTwoPoints(p1, p2)
         return {"sketch": sketch.name, "sides": sides, "radius": radius}
 
-    def add_constraint(self, constraint_type: str,
-                       entity_one: int = None, entity_two: int = None,
-                       symmetry_line: int = None, sketch_name: str = None):
-        sketch = (self._sketch_by_name(sketch_name) if sketch_name
-                  else self._last_sketch())
+    def add_constraint(
+        self,
+        constraint_type: str,
+        entity_one: int = None,
+        entity_two: int = None,
+        symmetry_line: int = None,
+        sketch_name: str = None,
+    ):
+        sketch = (
+            self._sketch_by_name(sketch_name) if sketch_name else self._last_sketch()
+        )
         constraints = sketch.geometricConstraints
         curves = list(sketch.sketchCurves)
 
@@ -524,9 +671,9 @@ class CommandHandler:
             "collinear": lambda: constraints.addCollinear(e1, e2),
             "smooth": lambda: constraints.addSmooth(e1, e2),
             "midpoint": lambda: constraints.addMidPoint(
-                sketch.sketchPoints.item(entity_one), e2),
-            "symmetry": lambda: constraints.addSymmetry(
-                e1, e2, curves[symmetry_line]),
+                sketch.sketchPoints.item(entity_one), e2
+            ),
+            "symmetry": lambda: constraints.addSymmetry(e1, e2, curves[symmetry_line]),
         }
 
         if constraint_type not in constraint_map:
@@ -535,11 +682,17 @@ class CommandHandler:
         constraint_map[constraint_type]()
         return {"sketch": sketch.name, "constraint_type": constraint_type}
 
-    def add_dimension(self, dimension_type: str, value: float,
-                      entity_one: int = None, entity_two: int = None,
-                      sketch_name: str = None):
-        sketch = (self._sketch_by_name(sketch_name) if sketch_name
-                  else self._last_sketch())
+    def add_dimension(
+        self,
+        dimension_type: str,
+        value: float,
+        entity_one: int = None,
+        entity_two: int = None,
+        sketch_name: str = None,
+    ):
+        sketch = (
+            self._sketch_by_name(sketch_name) if sketch_name else self._last_sketch()
+        )
         dims = sketch.sketchDimensions
         curves = list(sketch.sketchCurves)
 
@@ -549,19 +702,25 @@ class CommandHandler:
 
         if dimension_type == "distance":
             dim = dims.addDistanceDimension(
-                e1.startSketchPoint, e2.startSketchPoint,
+                e1.startSketchPoint,
+                e2.startSketchPoint,
                 adsk.fusion.DimensionOrientations.AlignedDimensionOrientation,
-                text_pt)
+                text_pt,
+            )
         elif dimension_type == "horizontal":
             dim = dims.addDistanceDimension(
-                e1.startSketchPoint, e2.startSketchPoint,
+                e1.startSketchPoint,
+                e2.startSketchPoint,
                 adsk.fusion.DimensionOrientations.HorizontalDimensionOrientation,
-                text_pt)
+                text_pt,
+            )
         elif dimension_type == "vertical":
             dim = dims.addDistanceDimension(
-                e1.startSketchPoint, e2.startSketchPoint,
+                e1.startSketchPoint,
+                e2.startSketchPoint,
                 adsk.fusion.DimensionOrientations.VerticalDimensionOrientation,
-                text_pt)
+                text_pt,
+            )
         elif dimension_type == "angular":
             dim = dims.addAngularDimension(e1, e2, text_pt)
         elif dimension_type == "radial":
@@ -572,14 +731,19 @@ class CommandHandler:
             raise RuntimeError(f"Unknown dimension type: {dimension_type}")
 
         dim.parameter.value = value
-        return {"sketch": sketch.name, "dimension_type": dimension_type,
-                "value": value}
+        return {"sketch": sketch.name, "dimension_type": dimension_type, "value": value}
 
-    def offset_curve(self, curve_index: int, offset_distance: float,
-                     direction_x: float = 1, direction_y: float = 0,
-                     sketch_name: str = None):
-        sketch = (self._sketch_by_name(sketch_name) if sketch_name
-                  else self._last_sketch())
+    def offset_curve(
+        self,
+        curve_index: int,
+        offset_distance: float,
+        direction_x: float = 1,
+        direction_y: float = 0,
+        sketch_name: str = None,
+    ):
+        sketch = (
+            self._sketch_by_name(sketch_name) if sketch_name else self._last_sketch()
+        )
         curves = list(sketch.sketchCurves)
         curve = curves[curve_index]
         direction_pt = adsk.core.Point3D.create(direction_x, direction_y, 0)
@@ -589,30 +753,36 @@ class CommandHandler:
         sketch.offset(coll, direction_pt, offset_distance)
         return {"sketch": sketch.name, "offset_distance": offset_distance}
 
-    def trim_curve(self, curve_index: int, point_x: float, point_y: float,
-                   sketch_name: str = None):
-        sketch = (self._sketch_by_name(sketch_name) if sketch_name
-                  else self._last_sketch())
+    def trim_curve(
+        self, curve_index: int, point_x: float, point_y: float, sketch_name: str = None
+    ):
+        sketch = (
+            self._sketch_by_name(sketch_name) if sketch_name else self._last_sketch()
+        )
         curves = list(sketch.sketchCurves)
         curve = curves[curve_index]
         point = adsk.core.Point3D.create(point_x, point_y, 0)
         curve.trim(point)
         return {"sketch": sketch.name, "trimmed": True}
 
-    def extend_curve(self, curve_index: int, point_x: float, point_y: float,
-                     sketch_name: str = None):
-        sketch = (self._sketch_by_name(sketch_name) if sketch_name
-                  else self._last_sketch())
+    def extend_curve(
+        self, curve_index: int, point_x: float, point_y: float, sketch_name: str = None
+    ):
+        sketch = (
+            self._sketch_by_name(sketch_name) if sketch_name else self._last_sketch()
+        )
         curves = list(sketch.sketchCurves)
         curve = curves[curve_index]
         point = adsk.core.Point3D.create(point_x, point_y, 0)
         curve.extend(point)
         return {"sketch": sketch.name, "extended": True}
 
-    def project_geometry(self, source_name: str, is_linked: bool = True,
-                         sketch_name: str = None):
-        sketch = (self._sketch_by_name(sketch_name) if sketch_name
-                  else self._last_sketch())
+    def project_geometry(
+        self, source_name: str, is_linked: bool = True, sketch_name: str = None
+    ):
+        sketch = (
+            self._sketch_by_name(sketch_name) if sketch_name else self._last_sketch()
+        )
         body = self._body_by_name(source_name)
 
         projected = []
@@ -620,15 +790,23 @@ class CommandHandler:
             proj = sketch.project(edge)
             projected.append(proj.count)
 
-        return {"sketch": sketch.name, "source": source_name,
-                "projected_curves": sum(projected)}
+        return {
+            "sketch": sketch.name,
+            "source": source_name,
+            "projected_curves": sum(projected),
+        }
 
     # ------------------------------------------------------------------
     # Features
     # ------------------------------------------------------------------
 
-    def extrude(self, height: float, profile_index: int = 0,
-                operation: str = "new_body", direction: str = "positive"):
+    def extrude(
+        self,
+        height: float,
+        profile_index: int = 0,
+        operation: str = "new_body",
+        direction: str = "positive",
+    ):
         root = self._root()
         sketch = self._last_sketch()
         if sketch.profiles.count == 0:
@@ -636,8 +814,7 @@ class CommandHandler:
         profile = sketch.profiles.item(profile_index)
 
         ext_feats = root.features.extrudeFeatures
-        ext_input = ext_feats.createInput(profile,
-                                          self._operation_type(operation))
+        ext_input = ext_feats.createInput(profile, self._operation_type(operation))
         dist = adsk.core.ValueInput.createByReal(height)
         if direction == "symmetric":
             ext_input.setSymmetricExtent(dist, True)
@@ -645,15 +822,25 @@ class CommandHandler:
             ext_input.setDistanceExtent(direction == "negative", dist)
 
         feat = ext_feats.add(ext_input)
-        return {"feature_name": feat.name, "height": height,
-                "operation": operation, "direction": direction}
+        return {
+            "feature_name": feat.name,
+            "height": height,
+            "operation": operation,
+            "direction": direction,
+        }
 
-    def revolve(self, angle: float, profile_index: int = 0,
-                axis_origin_x: float = 0, axis_origin_y: float = 0,
-                axis_origin_z: float = 0,
-                axis_direction_x: float = 1, axis_direction_y: float = 0,
-                axis_direction_z: float = 0,
-                operation: str = "new_body"):
+    def revolve(
+        self,
+        angle: float,
+        profile_index: int = 0,
+        axis_origin_x: float = 0,
+        axis_origin_y: float = 0,
+        axis_origin_z: float = 0,
+        axis_direction_x: float = 1,
+        axis_direction_y: float = 0,
+        axis_direction_z: float = 0,
+        operation: str = "new_body",
+    ):
         root = self._root()
         sketch = self._last_sketch()
         if sketch.profiles.count == 0:
@@ -674,28 +861,35 @@ class CommandHandler:
         else:
             # Create construction line in sketch
             origin = adsk.core.Point3D.create(
-                axis_origin_x, axis_origin_y, axis_origin_z)
+                axis_origin_x, axis_origin_y, axis_origin_z
+            )
             end_pt = adsk.core.Point3D.create(
                 axis_origin_x + axis_direction_x * 10,
                 axis_origin_y + axis_direction_y * 10,
-                axis_origin_z + axis_direction_z * 10)
+                axis_origin_z + axis_direction_z * 10,
+            )
             line = sketch.sketchCurves.sketchLines.addByTwoPoints(origin, end_pt)
             line.isConstruction = True
             axis_entity = line
 
         rev_feats = root.features.revolveFeatures
-        rev_input = rev_feats.createInput(profile, axis_entity,
-                                          self._operation_type(operation))
+        rev_input = rev_feats.createInput(
+            profile, axis_entity, self._operation_type(operation)
+        )
 
         angle_val = adsk.core.ValueInput.createByString(f"{angle} deg")
         rev_input.setAngleExtent(False, angle_val)
 
         feat = rev_feats.add(rev_input)
-        return {"feature_name": feat.name, "angle": angle,
-                "operation": operation}
+        return {"feature_name": feat.name, "angle": angle, "operation": operation}
 
-    def sweep(self, profile_index: int, path_sketch_name: str,
-              path_curve_index: int = 0, operation: str = "new_body"):
+    def sweep(
+        self,
+        profile_index: int,
+        path_sketch_name: str,
+        path_curve_index: int = 0,
+        operation: str = "new_body",
+    ):
         root = self._root()
         sketch = self._last_sketch()
         path_sketch = self._sketch_by_name(path_sketch_name)
@@ -710,8 +904,9 @@ class CommandHandler:
         path = root.features.createPath(path_curve)
 
         sweep_feats = root.features.sweepFeatures
-        sweep_input = sweep_feats.createInput(profile, path,
-                                              self._operation_type(operation))
+        sweep_input = sweep_feats.createInput(
+            profile, path, self._operation_type(operation)
+        )
         feat = sweep_feats.add(sweep_input)
         return {"feature_name": feat.name, "operation": operation}
 
@@ -727,44 +922,73 @@ class CommandHandler:
             loft_input.loftSections.add(sketch.profiles.item(0))
 
         feat = loft_feats.add(loft_input)
-        return {"feature_name": feat.name, "operation": operation,
-                "profile_count": len(profile_sketch_names)}
+        return {
+            "feature_name": feat.name,
+            "operation": operation,
+            "profile_count": len(profile_sketch_names),
+        }
 
-    def fillet(self, radius: float, body_name: str = None,
-              body_index: int = 0, edge_selection: str = "all"):
+    def fillet(
+        self,
+        radius: float,
+        body_name: str = None,
+        body_index: int = 0,
+        edge_selection: str = "all",
+    ):
         root = self._root()
-        body = (self._body_by_name(body_name)
-                if body_name else root.bRepBodies.item(body_index))
+        body = (
+            self._body_by_name(body_name)
+            if body_name
+            else root.bRepBodies.item(body_index)
+        )
         edges = self._select_edges(body, edge_selection)
 
         fillets = root.features.filletFeatures
         inp = fillets.createInput()
         inp.addConstantRadiusEdgeSet(
-            edges, adsk.core.ValueInput.createByReal(radius), True)
+            edges, adsk.core.ValueInput.createByReal(radius), True
+        )
         feat = fillets.add(inp)
-        return {"feature_name": feat.name, "radius": radius,
-                "edges_count": edges.count}
+        return {"feature_name": feat.name, "radius": radius, "edges_count": edges.count}
 
-    def chamfer(self, distance: float, body_name: str = None,
-                body_index: int = 0, edge_selection: str = "all"):
+    def chamfer(
+        self,
+        distance: float,
+        body_name: str = None,
+        body_index: int = 0,
+        edge_selection: str = "all",
+    ):
         root = self._root()
-        body = (self._body_by_name(body_name)
-                if body_name else root.bRepBodies.item(body_index))
+        body = (
+            self._body_by_name(body_name)
+            if body_name
+            else root.bRepBodies.item(body_index)
+        )
         edges = self._select_edges(body, edge_selection)
 
         chamfers = root.features.chamferFeatures
         inp = chamfers.createInput(edges, True)
-        inp.setToEqualDistance(
-            adsk.core.ValueInput.createByReal(distance))
+        inp.setToEqualDistance(adsk.core.ValueInput.createByReal(distance))
         feat = chamfers.add(inp)
-        return {"feature_name": feat.name, "distance": distance,
-                "edges_count": edges.count}
+        return {
+            "feature_name": feat.name,
+            "distance": distance,
+            "edges_count": edges.count,
+        }
 
-    def shell(self, thickness: float, body_name: str = None,
-              body_index: int = 0, face_selection: str = "top"):
+    def shell(
+        self,
+        thickness: float,
+        body_name: str = None,
+        body_index: int = 0,
+        face_selection: str = "top",
+    ):
         root = self._root()
-        body = (self._body_by_name(body_name)
-                if body_name else root.bRepBodies.item(body_index))
+        body = (
+            self._body_by_name(body_name)
+            if body_name
+            else root.bRepBodies.item(body_index)
+        )
 
         faces = adsk.core.ObjectCollection.create()
         bbox = body.boundingBox
@@ -781,7 +1005,8 @@ class CommandHandler:
                     faces.add(face)
         else:
             raise RuntimeError(
-                f"Unknown face_selection '{face_selection}' — use top/bottom")
+                f"Unknown face_selection '{face_selection}' — use top/bottom"
+            )
 
         if faces.count == 0:
             raise RuntimeError(f"No faces matched '{face_selection}'")
@@ -793,31 +1018,44 @@ class CommandHandler:
         inp.facesToRemove = faces
         inp.insideThickness = adsk.core.ValueInput.createByReal(thickness)
         feat = shells.add(inp)
-        return {"feature_name": feat.name, "thickness": thickness,
-                "faces_removed": faces.count}
+        return {
+            "feature_name": feat.name,
+            "thickness": thickness,
+            "faces_removed": faces.count,
+        }
 
-    def mirror(self, mirror_plane: str, body_name: str = None,
-               body_index: int = 0):
+    def mirror(self, mirror_plane: str, body_name: str = None, body_index: int = 0):
         root = self._root()
-        body = (self._body_by_name(body_name)
-                if body_name else root.bRepBodies.item(body_index))
+        body = (
+            self._body_by_name(body_name)
+            if body_name
+            else root.bRepBodies.item(body_index)
+        )
 
         entities = adsk.core.ObjectCollection.create()
         entities.add(body)
 
         mirrors = root.features.mirrorFeatures
-        inp = mirrors.createInput(entities,
-                                  self._construction_plane(mirror_plane))
+        inp = mirrors.createInput(entities, self._construction_plane(mirror_plane))
         feat = mirrors.add(inp)
         return {"feature_name": feat.name, "mirror_plane": mirror_plane}
 
-    def create_hole(self, diameter: float, depth: float,
-                    body_name: str = None, body_index: int = 0,
-                    face_selection: str = "top",
-                    center_x: float = 0, center_y: float = 0):
+    def create_hole(
+        self,
+        diameter: float,
+        depth: float,
+        body_name: str = None,
+        body_index: int = 0,
+        face_selection: str = "top",
+        center_x: float = 0,
+        center_y: float = 0,
+    ):
         root = self._root()
-        body = (self._body_by_name(body_name)
-                if body_name else root.bRepBodies.item(body_index))
+        body = (
+            self._body_by_name(body_name)
+            if body_name
+            else root.bRepBodies.item(body_index)
+        )
 
         # Find the target face
         bbox = body.boundingBox
@@ -846,16 +1084,22 @@ class CommandHandler:
         # Create hole feature
         holes = root.features.holeFeatures
         hole_input = holes.createSimpleInput(
-            adsk.core.ValueInput.createByReal(diameter / 2))
+            adsk.core.ValueInput.createByReal(diameter / 2)
+        )
         hole_input.setPositionBySketchPoint(sketch_pt)
         hole_input.setDistanceExtent(adsk.core.ValueInput.createByReal(depth))
 
         feat = holes.add(hole_input)
         return {"feature_name": feat.name, "diameter": diameter, "depth": depth}
 
-    def rectangular_pattern(self, body_name: str,
-                            x_count: int = 1, x_spacing: float = 1.0,
-                            y_count: int = 1, y_spacing: float = 1.0):
+    def rectangular_pattern(
+        self,
+        body_name: str,
+        x_count: int = 1,
+        x_spacing: float = 1.0,
+        y_count: int = 1,
+        y_spacing: float = 1.0,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -863,19 +1107,24 @@ class CommandHandler:
         bodies.add(body)
 
         patterns = root.features.rectangularPatternFeatures
-        inp = patterns.createInput(bodies,
-                                   root.xConstructionAxis,
-                                   adsk.core.ValueInput.createByReal(x_count),
-                                   adsk.core.ValueInput.createByReal(x_spacing),
-                                   adsk.fusion.PatternDistanceType.SpacingPatternDistanceType)
-        inp.setDirectionTwo(root.yConstructionAxis,
-                           adsk.core.ValueInput.createByReal(y_count),
-                           adsk.core.ValueInput.createByReal(y_spacing))
+        inp = patterns.createInput(
+            bodies,
+            root.xConstructionAxis,
+            adsk.core.ValueInput.createByReal(x_count),
+            adsk.core.ValueInput.createByReal(x_spacing),
+            adsk.fusion.PatternDistanceType.SpacingPatternDistanceType,
+        )
+        inp.setDirectionTwo(
+            root.yConstructionAxis,
+            adsk.core.ValueInput.createByReal(y_count),
+            adsk.core.ValueInput.createByReal(y_spacing),
+        )
         feat = patterns.add(inp)
         return {"feature_name": feat.name, "x_count": x_count, "y_count": y_count}
 
-    def circular_pattern(self, body_name: str, count: int,
-                         axis: str = "z", total_angle: float = 360):
+    def circular_pattern(
+        self, body_name: str, count: int, axis: str = "z", total_angle: float = 360
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -889,14 +1138,18 @@ class CommandHandler:
         feat = patterns.add(inp)
         return {"feature_name": feat.name, "count": count, "total_angle": total_angle}
 
-    def create_thread(self, body_name: str, face_index: int,
-                      is_internal: bool = False,
-                      thread_type: str = "ISO Metric profile",
-                      thread_designation: str = "M10x1.5",
-                      thread_class: str = "6g",
-                      is_modeled: bool = False,
-                      is_full_length: bool = True,
-                      thread_length: float = None):
+    def create_thread(
+        self,
+        body_name: str,
+        face_index: int,
+        is_internal: bool = False,
+        thread_type: str = "ISO Metric profile",
+        thread_designation: str = "M10x1.5",
+        thread_class: str = "6g",
+        is_modeled: bool = False,
+        is_full_length: bool = True,
+        thread_length: float = None,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
         face = body.faces.item(face_index)
@@ -914,23 +1167,35 @@ class CommandHandler:
         feat = threads.add(inp)
         return {"feature_name": feat.name, "thread_type": thread_type}
 
-    def draft_faces(self, body_name: str, angle: float,
-                    face_selection: str = "vertical",
-                    pull_direction_plane: str = "xy",
-                    is_tangent_chain: bool = True):
+    def draft_faces(
+        self,
+        body_name: str,
+        angle: float,
+        face_selection: str = "vertical",
+        pull_direction_plane: str = "xy",
+        is_tangent_chain: bool = True,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
         faces = self._select_faces(body, face_selection)
 
         drafts = root.features.draftFeatures
-        inp = drafts.createInput(faces, self._construction_plane(pull_direction_plane),
-                                 adsk.core.ValueInput.createByString(f"{angle} deg"),
-                                 is_tangent_chain)
+        inp = drafts.createInput(
+            faces,
+            self._construction_plane(pull_direction_plane),
+            adsk.core.ValueInput.createByString(f"{angle} deg"),
+            is_tangent_chain,
+        )
         feat = drafts.add(inp)
         return {"feature_name": feat.name, "angle": angle}
 
-    def split_body(self, body_name: str, splitting_plane: str = "xy",
-                   splitting_body: str = None, extend_tool: bool = True):
+    def split_body(
+        self,
+        body_name: str,
+        splitting_plane: str = "xy",
+        splitting_body: str = None,
+        extend_tool: bool = True,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -939,13 +1204,19 @@ class CommandHandler:
             tool = self._body_by_name(splitting_body)
             inp = splits.createInput(body, tool, extend_tool)
         else:
-            inp = splits.createInput(body, self._construction_plane(splitting_plane),
-                                     extend_tool)
+            inp = splits.createInput(
+                body, self._construction_plane(splitting_plane), extend_tool
+            )
         feat = splits.add(inp)
         return {"feature_name": feat.name, "splitting_plane": splitting_plane}
 
-    def split_face(self, body_name: str, face_indices: list = None,
-                   splitting_plane: str = "xy", extend_tool: bool = True):
+    def split_face(
+        self,
+        body_name: str,
+        face_indices: list = None,
+        splitting_plane: str = "xy",
+        extend_tool: bool = True,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -958,13 +1229,19 @@ class CommandHandler:
                 faces.add(face)
 
         splits = root.features.splitFaceFeatures
-        inp = splits.createInput(faces, self._construction_plane(splitting_plane),
-                                 extend_tool)
+        inp = splits.createInput(
+            faces, self._construction_plane(splitting_plane), extend_tool
+        )
         feat = splits.add(inp)
         return {"feature_name": feat.name}
 
-    def offset_faces(self, body_name: str, distance: float,
-                     face_selection: str = "top", face_indices: list = None):
+    def offset_faces(
+        self,
+        body_name: str,
+        distance: float,
+        face_selection: str = "top",
+        face_indices: list = None,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -976,17 +1253,25 @@ class CommandHandler:
             faces = self._select_faces(body, face_selection)
 
         offsets = root.features.offsetFeatures
-        inp = offsets.createInput(faces,
-                                  adsk.core.ValueInput.createByReal(distance),
-                                  adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+        inp = offsets.createInput(
+            faces,
+            adsk.core.ValueInput.createByReal(distance),
+            adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+        )
         feat = offsets.add(inp)
         return {"feature_name": feat.name, "distance": distance}
 
-    def scale_body(self, body_name: str, scale: float,
-                   scale_x: float = None, scale_y: float = None,
-                   scale_z: float = None,
-                   anchor_x: float = 0, anchor_y: float = 0,
-                   anchor_z: float = 0):
+    def scale_body(
+        self,
+        body_name: str,
+        scale: float,
+        scale_x: float = None,
+        scale_y: float = None,
+        scale_z: float = None,
+        anchor_x: float = 0,
+        anchor_y: float = 0,
+        anchor_z: float = 0,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -997,13 +1282,17 @@ class CommandHandler:
 
         scales = root.features.scaleFeatures
         if scale_x is not None and scale_y is not None and scale_z is not None:
-            inp = scales.createInput(bodies, anchor,
-                                     adsk.core.ValueInput.createByReal(scale_x),
-                                     adsk.core.ValueInput.createByReal(scale_y),
-                                     adsk.core.ValueInput.createByReal(scale_z))
+            inp = scales.createInput(
+                bodies,
+                anchor,
+                adsk.core.ValueInput.createByReal(scale_x),
+                adsk.core.ValueInput.createByReal(scale_y),
+                adsk.core.ValueInput.createByReal(scale_z),
+            )
         else:
-            inp = scales.createInput(bodies, anchor,
-                                     adsk.core.ValueInput.createByReal(scale))
+            inp = scales.createInput(
+                bodies, anchor, adsk.core.ValueInput.createByReal(scale)
+            )
         feat = scales.add(inp)
         return {"feature_name": feat.name, "scale": scale}
 
@@ -1011,7 +1300,7 @@ class CommandHandler:
         design = self._design()
         for i in range(design.timeline.count):
             item = design.timeline.item(i)
-            has_entity = hasattr(item, 'entity') and item.entity
+            has_entity = hasattr(item, "entity") and item.entity
             if has_entity and item.entity.name == feature_name:
                 item.isSuppressed = True
                 return {"suppressed": True, "feature": feature_name}
@@ -1021,7 +1310,7 @@ class CommandHandler:
         design = self._design()
         for i in range(design.timeline.count):
             item = design.timeline.item(i)
-            has_entity = hasattr(item, 'entity') and item.entity
+            has_entity = hasattr(item, "entity") and item.entity
             if has_entity and item.entity.name == feature_name:
                 item.isSuppressed = False
                 return {"unsuppressed": True, "feature": feature_name}
@@ -1037,8 +1326,7 @@ class CommandHandler:
         body.name = new_name
         return {"renamed": True, "old_name": old_name, "new_name": new_name}
 
-    def move_body(self, body_name: str, x: float = 0, y: float = 0,
-                  z: float = 0):
+    def move_body(self, body_name: str, x: float = 0, y: float = 0, z: float = 0):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -1051,8 +1339,7 @@ class CommandHandler:
 
         inp = move_feats.createInput(bodies, transform)
         feat = move_feats.add(inp)
-        return {"feature_name": feat.name, "body": body_name,
-                "translation": [x, y, z]}
+        return {"feature_name": feat.name, "body": body_name, "translation": [x, y, z]}
 
     def export_stl(self, body_name: str, file_path: str = None):
         body = self._body_by_name(body_name)
@@ -1069,10 +1356,10 @@ class CommandHandler:
         if occ is None:
             stl_opts = export_mgr.createSTLExportOptions(body, file_path)
             stl_opts.meshRefinement = (
-                adsk.fusion.MeshRefinementSettings.MeshRefinementMedium)
+                adsk.fusion.MeshRefinementSettings.MeshRefinementMedium
+            )
             export_mgr.execute(stl_opts)
-            return {"exported": True, "body": body_name,
-                    "file_path": file_path}
+            return {"exported": True, "body": body_name, "file_path": file_path}
 
         # Body lives in a component occurrence: hide siblings so the
         # occurrence export only contains the target body. Identify
@@ -1088,14 +1375,14 @@ class CommandHandler:
         try:
             stl_opts = export_mgr.createSTLExportOptions(occ, file_path)
             stl_opts.meshRefinement = (
-                adsk.fusion.MeshRefinementSettings.MeshRefinementMedium)
+                adsk.fusion.MeshRefinementSettings.MeshRefinementMedium
+            )
             export_mgr.execute(stl_opts)
         finally:
             for sibling in hidden:
                 sibling.isVisible = True
 
-        return {"exported": True, "body": body_name,
-                "file_path": file_path}
+        return {"exported": True, "body": body_name, "file_path": file_path}
 
     def export_step(self, body_name: str, file_path: str = None):
         body = self._body_by_name(body_name)
@@ -1112,8 +1399,7 @@ class CommandHandler:
         if occ is None:
             step_opts = export_mgr.createSTEPExportOptions(file_path, body)
             export_mgr.execute(step_opts)
-            return {"exported": True, "body": body_name,
-                    "file_path": file_path}
+            return {"exported": True, "body": body_name, "file_path": file_path}
 
         # Body lives in a component occurrence: hide siblings so the
         # occurrence export only contains the target body. Identify
@@ -1133,8 +1419,7 @@ class CommandHandler:
             for sibling in hidden:
                 sibling.isVisible = True
 
-        return {"exported": True, "body": body_name,
-                "file_path": file_path}
+        return {"exported": True, "body": body_name, "file_path": file_path}
 
     def export_f3d(self, file_path: str = None):
         design = self._design()
@@ -1156,20 +1441,6 @@ class CommandHandler:
     # Render canonical views (iso/front/top/right/...) as PNGs and emit
     # a self-contained HTML page suitable for print-to-PDF. Intended
     # audience: mechanical engineers who want a quick sense of the part.
-
-    # Unit vectors per view: (eye_dir, up). Fusion's world is Z-up.
-    _VIEW_DIRS = {
-        "iso":    (( 1.0, -1.0,  1.0), (0.0, 0.0, 1.0)),
-        "iso_ne": (( 1.0,  1.0,  1.0), (0.0, 0.0, 1.0)),
-        "iso_nw": ((-1.0,  1.0,  1.0), (0.0, 0.0, 1.0)),
-        "iso_sw": ((-1.0, -1.0,  1.0), (0.0, 0.0, 1.0)),
-        "front":  (( 0.0, -1.0,  0.0), (0.0, 0.0, 1.0)),
-        "back":   (( 0.0,  1.0,  0.0), (0.0, 0.0, 1.0)),
-        "top":    (( 0.0,  0.0,  1.0), (0.0, 1.0, 0.0)),
-        "bottom": (( 0.0,  0.0, -1.0), (0.0, 1.0, 0.0)),
-        "right":  (( 1.0,  0.0,  0.0), (0.0, 0.0, 1.0)),
-        "left":   ((-1.0,  0.0,  0.0), (0.0, 0.0, 1.0)),
-    }
 
     def _scene_center_and_radius(self):
         """Return (center, radius) covering all visible root bodies."""
@@ -1209,8 +1480,7 @@ class CommandHandler:
         dir_vec, up_vec = self._VIEW_DIRS[view_name]
         length = math.sqrt(sum(c * c for c in dir_vec))
         dist = radius * 3.0  # give fit() headroom
-        eye = tuple(
-            center[i] + dir_vec[i] / length * dist for i in range(3))
+        eye = tuple(center[i] + dir_vec[i] / length * dist for i in range(3))
         vp = self.app.activeViewport
         cam = vp.camera
         cam.isSmoothTransition = False
@@ -1223,9 +1493,14 @@ class CommandHandler:
         vp.refresh()
         adsk.doEvents()
 
-    def export_view_sheet(self, title: str = None, notes: str = "",
-                          views: list = None, image_size: list = None,
-                          output_dir: str = None):
+    def export_view_sheet(
+        self,
+        title: str = None,
+        notes: str = "",
+        views: list = None,
+        image_size: list = None,
+        output_dir: str = None,
+    ):
         """Render canonical views as PNGs + a shareable HTML sheet.
 
         Args:
@@ -1253,14 +1528,14 @@ class CommandHandler:
         unknown = [v for v in views if v not in self._VIEW_DIRS]
         if unknown:
             raise RuntimeError(
-                f"Unknown views: {unknown}. "
-                f"Valid: {sorted(self._VIEW_DIRS)}"
+                f"Unknown views: {unknown}. Valid: {sorted(self._VIEW_DIRS)}"
             )
 
         if output_dir is None:
             ts = time.strftime("%Y%m%d_%H%M%S")
             output_dir = os.path.join(
-                os.path.expanduser("~"), "Desktop",
+                os.path.expanduser("~"),
+                "Desktop",
                 f"{doc_name}_views_{ts}",
             )
         os.makedirs(output_dir, exist_ok=True)
@@ -1350,7 +1625,7 @@ class CommandHandler:
   <h1>{html.escape(sheet_title)}</h1>
   <div class="meta">{html.escape(doc_name)} * {timestamp}</div>
 </header>
-<section class="views">{''.join(figures)}</section>
+<section class="views">{"".join(figures)}</section>
 {notes_block}
 </body></html>
 """
@@ -1377,8 +1652,9 @@ class CommandHandler:
             "image_size": [width, height],
         }
 
-    def boolean_operation(self, target_body: str, tool_body: str,
-                          operation: str = "join"):
+    def boolean_operation(
+        self, target_body: str, tool_body: str, operation: str = "join"
+    ):
         root = self._root()
         target = self._body_by_name(target_body)
         tool = self._body_by_name(tool_body)
@@ -1388,20 +1664,25 @@ class CommandHandler:
         tool_coll.add(tool)
 
         op_map = {
-            "join":      adsk.fusion.FeatureOperations.JoinFeatureOperation,
-            "cut":       adsk.fusion.FeatureOperations.CutFeatureOperation,
+            "join": adsk.fusion.FeatureOperations.JoinFeatureOperation,
+            "cut": adsk.fusion.FeatureOperations.CutFeatureOperation,
             "intersect": adsk.fusion.FeatureOperations.IntersectFeatureOperation,
         }
         op = op_map.get(operation)
         if op is None:
             raise RuntimeError(
-                f"Unknown boolean op '{operation}' — use join/cut/intersect")
+                f"Unknown boolean op '{operation}' — use join/cut/intersect"
+            )
 
         inp = combine_feats.createInput(target, tool_coll)
         inp.operation = op
         feat = combine_feats.add(inp)
-        return {"feature_name": feat.name, "operation": operation,
-                "target": target_body, "tool": tool_body}
+        return {
+            "feature_name": feat.name,
+            "operation": operation,
+            "target": target_body,
+            "tool": tool_body,
+        }
 
     def delete_all(self):
         design = self._design()
@@ -1418,7 +1699,7 @@ class CommandHandler:
         design = self._design()
         type_before = design.designType
 
-        cmd_def = self.ui.commandDefinitions.itemById('UndoCommand')
+        cmd_def = self.ui.commandDefinitions.itemById("UndoCommand")
         if cmd_def:
             cmd_def.execute()
 
@@ -1427,7 +1708,7 @@ class CommandHandler:
         type_after = design.designType
         if type_before != type_after:
             # Undo the undo — redo to restore original state
-            redo_def = self.ui.commandDefinitions.itemById('RedoCommand')
+            redo_def = self.ui.commandDefinitions.itemById("RedoCommand")
             if redo_def:
                 redo_def.execute()
                 adsk.doEvents()
@@ -1445,18 +1726,27 @@ class CommandHandler:
     # Direct Primitives (via TemporaryBRepManager)
     # ------------------------------------------------------------------
 
-    def create_box(self, length: float, width: float, height: float,
-                   center_x: float = 0, center_y: float = 0,
-                   center_z: float = 0):
+    def create_box(
+        self,
+        length: float,
+        width: float,
+        height: float,
+        center_x: float = 0,
+        center_y: float = 0,
+        center_z: float = 0,
+    ):
         root = self._root()
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
         # Box orientation matrix
         orient = adsk.core.OrientedBoundingBox3D.create(
-            adsk.core.Point3D.create(center_x, center_y, center_z + height/2),
+            adsk.core.Point3D.create(center_x, center_y, center_z + height / 2),
             adsk.core.Vector3D.create(1, 0, 0),
             adsk.core.Vector3D.create(0, 1, 0),
-            length, width, height)
+            length,
+            width,
+            height,
+        )
 
         box_body = temp_brep.createBox(orient)
         base_feat = root.features.baseFeatures.add()
@@ -1464,12 +1754,17 @@ class CommandHandler:
         root.bRepBodies.add(box_body, base_feat)
         base_feat.finishEdit()
 
-        return {"created": True, "length": length, "width": width,
-                "height": height}
+        return {"created": True, "length": length, "width": width, "height": height}
 
-    def create_cylinder(self, radius: float, height: float,
-                        base_x: float = 0, base_y: float = 0,
-                        base_z: float = 0, axis: str = "z"):
+    def create_cylinder(
+        self,
+        radius: float,
+        height: float,
+        base_x: float = 0,
+        base_y: float = 0,
+        base_z: float = 0,
+        axis: str = "z",
+    ):
         root = self._root()
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
@@ -1478,7 +1773,8 @@ class CommandHandler:
         top_pt = adsk.core.Point3D.create(
             base_x + axis_vec[0] * height,
             base_y + axis_vec[1] * height,
-            base_z + axis_vec[2] * height)
+            base_z + axis_vec[2] * height,
+        )
 
         cyl_body = temp_brep.createCylinderOrCone(base_pt, radius, top_pt, radius)
 
@@ -1489,9 +1785,13 @@ class CommandHandler:
 
         return {"created": True, "radius": radius, "height": height}
 
-    def create_sphere(self, radius: float,
-                      center_x: float = 0, center_y: float = 0,
-                      center_z: float = 0):
+    def create_sphere(
+        self,
+        radius: float,
+        center_x: float = 0,
+        center_y: float = 0,
+        center_z: float = 0,
+    ):
         root = self._root()
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
@@ -1505,9 +1805,15 @@ class CommandHandler:
 
         return {"created": True, "radius": radius}
 
-    def create_torus(self, major_radius: float, minor_radius: float,
-                     center_x: float = 0, center_y: float = 0,
-                     center_z: float = 0, axis: str = "z"):
+    def create_torus(
+        self,
+        major_radius: float,
+        minor_radius: float,
+        center_x: float = 0,
+        center_y: float = 0,
+        center_z: float = 0,
+        axis: str = "z",
+    ):
         root = self._root()
         temp_brep = adsk.fusion.TemporaryBRepManager.get()
 
@@ -1515,41 +1821,57 @@ class CommandHandler:
         axis_vec = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[axis]
         axis_vector = adsk.core.Vector3D.create(*axis_vec)
 
-        torus_body = temp_brep.createTorus(center, axis_vector,
-                                           major_radius, minor_radius)
+        torus_body = temp_brep.createTorus(
+            center, axis_vector, major_radius, minor_radius
+        )
 
         base_feat = root.features.baseFeatures.add()
         base_feat.startEdit()
         root.bRepBodies.add(torus_body, base_feat)
         base_feat.finishEdit()
 
-        return {"created": True, "major_radius": major_radius,
-                "minor_radius": minor_radius}
+        return {
+            "created": True,
+            "major_radius": major_radius,
+            "minor_radius": minor_radius,
+        }
 
     # ------------------------------------------------------------------
     # Construction Geometry
     # ------------------------------------------------------------------
 
-    def create_construction_plane(self, method: str,
-                                  plane: str = None, offset: float = None,
-                                  angle: float = None, edge_name: str = None,
-                                  plane_one: str = None, plane_two: str = None,
-                                  point_one: list = None, point_two: list = None,
-                                  point_three: list = None):
+    def create_construction_plane(
+        self,
+        method: str,
+        plane: str = None,
+        offset: float = None,
+        angle: float = None,
+        edge_name: str = None,
+        plane_one: str = None,
+        plane_two: str = None,
+        point_one: list = None,
+        point_two: list = None,
+        point_three: list = None,
+    ):
         root = self._root()
         planes = root.constructionPlanes
         inp = planes.createInput()
 
         if method == "offset":
-            inp.setByOffset(self._construction_plane(plane),
-                           adsk.core.ValueInput.createByReal(offset))
+            inp.setByOffset(
+                self._construction_plane(plane),
+                adsk.core.ValueInput.createByReal(offset),
+            )
         elif method == "angle":
-            inp.setByAngle(self._construction_axis(edge_name or "x"),
-                          adsk.core.ValueInput.createByString(f"{angle} deg"),
-                          self._construction_plane(plane))
+            inp.setByAngle(
+                self._construction_axis(edge_name or "x"),
+                adsk.core.ValueInput.createByString(f"{angle} deg"),
+                self._construction_plane(plane),
+            )
         elif method == "midplane":
-            inp.setByTwoPlanes(self._construction_plane(plane_one),
-                              self._construction_plane(plane_two))
+            inp.setByTwoPlanes(
+                self._construction_plane(plane_one), self._construction_plane(plane_two)
+            )
         elif method == "three_points":
             p1 = adsk.core.Point3D.create(*point_one)
             p2 = adsk.core.Point3D.create(*point_two)
@@ -1563,10 +1885,16 @@ class CommandHandler:
         plane_obj = planes.add(inp)
         return {"created": True, "name": plane_obj.name, "method": method}
 
-    def create_construction_axis(self, method: str,
-                                 point_one: list = None, point_two: list = None,
-                                 plane_one: str = None, plane_two: str = None,
-                                 body_name: str = None, edge_index: int = None):
+    def create_construction_axis(
+        self,
+        method: str,
+        point_one: list = None,
+        point_two: list = None,
+        plane_one: str = None,
+        plane_two: str = None,
+        body_name: str = None,
+        edge_index: int = None,
+    ):
         root = self._root()
         axes = root.constructionAxes
         inp = axes.createInput()
@@ -1576,8 +1904,9 @@ class CommandHandler:
             p2 = adsk.core.Point3D.create(*point_two)
             inp.setByTwoPoints(p1, p2)
         elif method == "intersection":
-            inp.setByTwoPlanes(self._construction_plane(plane_one),
-                              self._construction_plane(plane_two))
+            inp.setByTwoPlanes(
+                self._construction_plane(plane_one), self._construction_plane(plane_two)
+            )
         elif method == "edge":
             body = self._body_by_name(body_name)
             edge = body.edges.item(edge_index)
@@ -1597,15 +1926,15 @@ class CommandHandler:
 
     def create_component(self, name: str, parent_name: str = None):
         root = self._root()
-        parent = (self._component_by_name(parent_name) if parent_name
-                  else root)
+        parent = self._component_by_name(parent_name) if parent_name else root
 
         occ = parent.occurrences.addNewComponent(adsk.core.Matrix3D.create())
         occ.component.name = name
         return {"created": True, "name": name}
 
-    def add_joint(self, component_one: str, component_two: str,
-                  joint_type: str = "rigid"):
+    def add_joint(
+        self, component_one: str, component_two: str, joint_type: str = "rigid"
+    ):
         root = self._root()
 
         occ1 = occ2 = None
@@ -1645,8 +1974,9 @@ class CommandHandler:
         joints.add(inp)
         return {"created": True, "joint_type": joint_type}
 
-    def create_as_built_joint(self, component_one: str, component_two: str,
-                              joint_type: str = "rigid"):
+    def create_as_built_joint(
+        self, component_one: str, component_two: str, joint_type: str = "rigid"
+    ):
         root = self._root()
 
         occ1 = occ2 = None
@@ -1664,8 +1994,7 @@ class CommandHandler:
         as_built.add(inp)
         return {"created": True, "joint_type": joint_type}
 
-    def create_rigid_group(self, component_names: list,
-                           include_children: bool = True):
+    def create_rigid_group(self, component_names: list, include_children: bool = True):
         root = self._root()
         occs = adsk.core.ObjectCollection.create()
 
@@ -1706,13 +2035,19 @@ class CommandHandler:
 
         measure = self.app.measureManager
         result = measure.measureMinimumDistance(e1, e2)
-        return {"distance": result.value,
-                "point_one": [result.pointOnEntityOne.x,
-                             result.pointOnEntityOne.y,
-                             result.pointOnEntityOne.z],
-                "point_two": [result.pointOnEntityTwo.x,
-                             result.pointOnEntityTwo.y,
-                             result.pointOnEntityTwo.z]}
+        return {
+            "distance": result.value,
+            "point_one": [
+                result.pointOnEntityOne.x,
+                result.pointOnEntityOne.y,
+                result.pointOnEntityOne.z,
+            ],
+            "point_two": [
+                result.pointOnEntityTwo.x,
+                result.pointOnEntityTwo.y,
+                result.pointOnEntityTwo.z,
+            ],
+        }
 
     def measure_angle(self, entity_one: str, entity_two: str):
         root = self._root()
@@ -1731,8 +2066,7 @@ class CommandHandler:
         result = measure.measureAngle(e1, e2)
         return {"angle_degrees": math.degrees(result.value)}
 
-    def get_physical_properties(self, body_name: str,
-                                accuracy: str = "medium"):
+    def get_physical_properties(self, body_name: str, accuracy: str = "medium"):
         body = self._body_by_name(body_name)
 
         accuracy_map = {
@@ -1749,9 +2083,11 @@ class CommandHandler:
             "volume": props.volume,
             "area": props.area,
             "density": props.density,
-            "center_of_mass": [props.centerOfMass.x,
-                              props.centerOfMass.y,
-                              props.centerOfMass.z],
+            "center_of_mass": [
+                props.centerOfMass.x,
+                props.centerOfMass.y,
+                props.centerOfMass.z,
+            ],
         }
 
     def create_section_analysis(self, plane: str = "yz", offset: float = 0):
@@ -1766,8 +2102,9 @@ class CommandHandler:
         analyses.add(inp)
         return {"created": True, "plane": plane, "offset": offset}
 
-    def check_interference(self, component_names: list,
-                           include_coincident_faces: bool = False):
+    def check_interference(
+        self, component_names: list, include_coincident_faces: bool = False
+    ):
         root = self._root()
         bodies = adsk.core.ObjectCollection.create()
 
@@ -1784,11 +2121,13 @@ class CommandHandler:
         results = []
         for i in range(interference.interferenceResultCount):
             result = interference.interferenceResult(i)
-            results.append({
-                "body_one": result.entityOne.name,
-                "body_two": result.entityTwo.name,
-                "volume": result.interferenceBody.volume,
-            })
+            results.append(
+                {
+                    "body_one": result.entityOne.name,
+                    "body_two": result.entityTwo.name,
+                    "volume": result.interferenceBody.volume,
+                }
+            )
 
         return {"interferences": results, "count": len(results)}
 
@@ -1796,14 +2135,19 @@ class CommandHandler:
     # Appearance
     # ------------------------------------------------------------------
 
-    def set_appearance(self, target_name: str, appearance_name: str,
-                       target_type: str = "body", face_index: int = None):
+    def set_appearance(
+        self,
+        target_name: str,
+        appearance_name: str,
+        target_type: str = "body",
+        face_index: int = None,
+    ):
         # Find appearance in library — try both known library names
-        app_lib = self.app.materialLibraries.itemByName(
-            "Fusion Appearance Library")
+        app_lib = self.app.materialLibraries.itemByName("Fusion Appearance Library")
         if app_lib is None:
             app_lib = self.app.materialLibraries.itemByName(
-                "Fusion 360 Appearance Library")
+                "Fusion 360 Appearance Library"
+            )
         if app_lib is None:
             # Fall back to searching all libraries
             for i in range(self.app.materialLibraries.count):
@@ -1835,8 +2179,7 @@ class CommandHandler:
             face = body.faces.item(face_index)
             face.appearance = appearance
 
-        return {"applied": True, "target": target_name,
-                "appearance": appearance_name}
+        return {"applied": True, "target": target_name, "appearance": appearance_name}
 
     # ------------------------------------------------------------------
     # Parameters
@@ -1846,21 +2189,21 @@ class CommandHandler:
         design = self._design()
         params = []
         for param in design.userParameters:
-            params.append({
-                "name": param.name,
-                "value": param.value,
-                "expression": param.expression,
-                "unit": param.unit,
-                "comment": param.comment,
-            })
+            params.append(
+                {
+                    "name": param.name,
+                    "value": param.value,
+                    "expression": param.expression,
+                    "unit": param.unit,
+                    "comment": param.comment,
+                }
+            )
         return {"parameters": params, "count": len(params)}
 
-    def create_parameter(self, name: str, value: float, unit: str,
-                         comment: str = None):
+    def create_parameter(self, name: str, value: float, unit: str, comment: str = None):
         design = self._design()
         params = design.userParameters
-        params.add(name, adsk.core.ValueInput.createByReal(value),
-                   unit, comment or "")
+        params.add(name, adsk.core.ValueInput.createByReal(value), unit, comment or "")
         return {"created": True, "name": name, "value": value, "unit": unit}
 
     def set_parameter(self, name: str, value: float):
@@ -1883,8 +2226,9 @@ class CommandHandler:
     # Surface Operations
     # ------------------------------------------------------------------
 
-    def patch_surface(self, sketch_name: str, profile_index: int = 0,
-                      continuity: str = "connected"):
+    def patch_surface(
+        self, sketch_name: str, profile_index: int = 0, continuity: str = "connected"
+    ):
         root = self._root()
         sketch = self._sketch_by_name(sketch_name)
 
@@ -1893,8 +2237,9 @@ class CommandHandler:
         profile = sketch.profiles.item(profile_index)
 
         patches = root.features.patchFeatures
-        inp = patches.createInput(profile,
-                                  adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+        inp = patches.createInput(
+            profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation
+        )
 
         sct = adsk.fusion.SurfaceContinuityTypes
         cont_map = {
@@ -1914,14 +2259,17 @@ class CommandHandler:
             bodies.add(self._body_by_name(name))
 
         stitches = root.features.stitchFeatures
-        inp = stitches.createInput(bodies,
-                                   adsk.core.ValueInput.createByReal(tolerance),
-                                   adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+        inp = stitches.createInput(
+            bodies,
+            adsk.core.ValueInput.createByReal(tolerance),
+            adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+        )
         feat = stitches.add(inp)
         return {"feature_name": feat.name, "body_count": len(body_names)}
 
-    def thicken_surface(self, body_name: str, thickness: float,
-                        direction: str = "symmetric"):
+    def thicken_surface(
+        self, body_name: str, thickness: float, direction: str = "symmetric"
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -1930,23 +2278,29 @@ class CommandHandler:
             faces.add(face)
 
         thickens = root.features.thickenFeatures
-        inp = thickens.createInput(faces,
-                                   adsk.core.ValueInput.createByReal(thickness),
-                                   False,
-                                   adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
-                                   direction == "symmetric")
+        inp = thickens.createInput(
+            faces,
+            adsk.core.ValueInput.createByReal(thickness),
+            False,
+            adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+            direction == "symmetric",
+        )
         feat = thickens.add(inp)
         return {"feature_name": feat.name, "thickness": thickness}
 
-    def ruled_surface(self, body_name: str, edge_index: int,
-                      distance: float = 1.0, rule_type: str = "normal"):
+    def ruled_surface(
+        self,
+        body_name: str,
+        edge_index: int,
+        distance: float = 1.0,
+        rule_type: str = "normal",
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
         edge = body.edges.item(edge_index)
 
         ruled = root.features.ruledSurfaceFeatures
-        inp = ruled.createInput(edge,
-                                adsk.core.ValueInput.createByReal(distance))
+        inp = ruled.createInput(edge, adsk.core.ValueInput.createByReal(distance))
         feat = ruled.add(inp)
         return {"feature_name": feat.name, "distance": distance}
 
@@ -1964,9 +2318,14 @@ class CommandHandler:
     # Sheet Metal
     # ------------------------------------------------------------------
 
-    def create_flange(self, body_name: str, edge_index: int,
-                      height: float = 1.0, angle: float = 90,
-                      bend_radius: float = None):
+    def create_flange(
+        self,
+        body_name: str,
+        edge_index: int,
+        height: float = 1.0,
+        angle: float = 90,
+        bend_radius: float = None,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
         edge = body.edges.item(edge_index)
@@ -1981,8 +2340,13 @@ class CommandHandler:
         feat = flanges.add(inp)
         return {"feature_name": feat.name, "height": height, "angle": angle}
 
-    def create_bend(self, body_name: str, bend_line_sketch: str = None,
-                    angle: float = 90, bend_radius: float = None):
+    def create_bend(
+        self,
+        body_name: str,
+        bend_line_sketch: str = None,
+        angle: float = 90,
+        bend_radius: float = None,
+    ):
         root = self._root()
         body = self._body_by_name(body_name)
 
@@ -2047,11 +2411,12 @@ class CommandHandler:
     def _get_cam(self):
         """Get the CAM product from the active document."""
         doc = self.app.activeDocument
-        cam_product = doc.products.itemByProductType('CAMProductType')
+        cam_product = doc.products.itemByProductType("CAMProductType")
         if not cam_product:
             raise RuntimeError(
                 "No CAM workspace found. Open the Manufacturing workspace "
-                "in Fusion 360 at least once to initialise it.")
+                "in Fusion 360 at least once to initialise it."
+            )
         return cam_product
 
     def _find_setup(self, cam, name: str):
@@ -2076,11 +2441,13 @@ class CommandHandler:
             ops = []
             for j in range(setup.operations.count):
                 ops.append(setup.operations.item(j).name)
-            result.append({
-                "name": setup.name,
-                "operations": ops,
-                "is_valid": setup.isValid,
-            })
+            result.append(
+                {
+                    "name": setup.name,
+                    "operations": ops,
+                    "is_valid": setup.isValid,
+                }
+            )
         return {"setups": result, "count": len(result)}
 
     def cam_list_operations(self, setup_name: str):
@@ -2089,11 +2456,13 @@ class CommandHandler:
         result = []
         for i in range(setup.operations.count):
             op = setup.operations.item(i)
-            result.append({
-                "name": op.name,
-                "has_toolpath": op.hasToolpath,
-                "is_valid": op.isValid,
-            })
+            result.append(
+                {
+                    "name": op.name,
+                    "has_toolpath": op.hasToolpath,
+                    "is_valid": op.isValid,
+                }
+            )
         return {"setup": setup_name, "operations": result, "count": len(result)}
 
     def cam_get_operation_info(self, setup_name: str, operation_name: str):
@@ -2107,12 +2476,12 @@ class CommandHandler:
             "has_toolpath": op.hasToolpath,
         }
 
-        if hasattr(op, 'tool') and op.tool:
+        if hasattr(op, "tool") and op.tool:
             tool = op.tool
-            desc = tool.description if hasattr(tool, 'description') else str(tool)
+            desc = tool.description if hasattr(tool, "description") else str(tool)
             info["tool"] = {"description": desc}
 
-        if hasattr(op, 'parameters'):
+        if hasattr(op, "parameters"):
             params = {}
             for param in op.parameters:
                 try:
@@ -2123,12 +2492,16 @@ class CommandHandler:
 
         return info
 
-    def cam_create_setup(self, body_name: str, name: str = None,
-                         operation_type: str = "milling",
-                         stock_mode: str = "relative_box",
-                         stock_offset_sides: float = 0,
-                         stock_offset_top: float = 0,
-                         stock_offset_bottom: float = 0):
+    def cam_create_setup(
+        self,
+        body_name: str,
+        name: str = None,
+        operation_type: str = "milling",
+        stock_mode: str = "relative_box",
+        stock_offset_sides: float = 0,
+        stock_offset_top: float = 0,
+        stock_offset_bottom: float = 0,
+    ):
         cam = self._get_cam()
         body = self._body_by_name(body_name)
 
@@ -2141,7 +2514,8 @@ class CommandHandler:
         if op_type is None:
             raise RuntimeError(
                 f"Unknown operation_type '{operation_type}' "
-                "— use milling/turning/cutting")
+                "— use milling/turning/cutting"
+            )
 
         setup_input = cam.setups.createInput(op_type)
         setup_input.models = [body]
@@ -2150,18 +2524,21 @@ class CommandHandler:
             setup_input.name = name
 
         setup = cam.setups.add(setup_input)
-        return {"name": setup.name, "body": body_name,
-                "operation_type": operation_type}
+        return {"name": setup.name, "body": body_name, "operation_type": operation_type}
 
-    def cam_create_operation(self, setup_name: str, strategy: str,
-                              name: str = None,
-                              tool_number: int = None,
-                              tool_diameter: float = None,
-                              stepdown: float = None,
-                              stepover: float = None,
-                              feed_rate: float = None,
-                              spindle_speed: float = None,
-                              coolant: str = "flood"):
+    def cam_create_operation(
+        self,
+        setup_name: str,
+        strategy: str,
+        name: str = None,
+        tool_number: int = None,
+        tool_diameter: float = None,
+        stepdown: float = None,
+        stepover: float = None,
+        feed_rate: float = None,
+        spindle_speed: float = None,
+        coolant: str = "flood",
+    ):
         cam = self._get_cam()
         setup = self._find_setup(cam, setup_name)
 
@@ -2178,9 +2555,12 @@ class CommandHandler:
         op = setup.operations.add(op_input)
         return {"name": op.name, "setup": setup_name, "strategy": strategy}
 
-    def cam_generate_toolpath(self, setup_name: str = None,
-                               operation_name: str = None,
-                               generate_all: bool = False):
+    def cam_generate_toolpath(
+        self,
+        setup_name: str = None,
+        operation_name: str = None,
+        generate_all: bool = False,
+    ):
         cam = self._get_cam()
 
         if generate_all:
@@ -2193,8 +2573,11 @@ class CommandHandler:
             op = self._find_operation(setup, operation_name)
             future = cam.generateToolpath(op)
             future.wait()
-            return {"generated": True, "scope": "operation",
-                    "operation": operation_name}
+            return {
+                "generated": True,
+                "scope": "operation",
+                "operation": operation_name,
+            }
 
         if setup_name:
             setup = self._find_setup(cam, setup_name)
@@ -2205,28 +2588,33 @@ class CommandHandler:
             future.wait()
             return {"generated": True, "scope": "setup", "setup": setup_name}
 
-        raise RuntimeError(
-            "Provide setup_name, operation_name, or generate_all=true")
+        raise RuntimeError("Provide setup_name, operation_name, or generate_all=true")
 
-    def cam_post_process(self, setup_name: str, operation_name: str = None,
-                          post_processor: str = "fanuc",
-                          output_folder: str = None,
-                          output_units: str = "mm"):
+    def cam_post_process(
+        self,
+        setup_name: str,
+        operation_name: str = None,
+        post_processor: str = "fanuc",
+        output_folder: str = None,
+        output_units: str = "mm",
+    ):
         cam = self._get_cam()
         setup = self._find_setup(cam, setup_name)
 
         if not output_folder:
             output_folder = os.path.join(os.path.expanduser("~"), "Desktop")
 
-        post_config = os.path.join(
-            cam.genericPostFolder, f"{post_processor}.cps")
+        post_config = os.path.join(cam.genericPostFolder, f"{post_processor}.cps")
 
-        units = (adsk.cam.PostOutputUnitOptions.MillimetersOutput
-                 if output_units == "mm"
-                 else adsk.cam.PostOutputUnitOptions.InchesOutput)
+        units = (
+            adsk.cam.PostOutputUnitOptions.MillimetersOutput
+            if output_units == "mm"
+            else adsk.cam.PostOutputUnitOptions.InchesOutput
+        )
 
         post_input = adsk.cam.PostProcessInput.create(
-            setup_name, post_config, output_folder, units)
+            setup_name, post_config, output_folder, units
+        )
         post_input.isOpenInEditor = False
 
         if operation_name:
@@ -2235,8 +2623,12 @@ class CommandHandler:
         else:
             cam.postProcess(setup, post_input)
 
-        return {"setup": setup_name, "post_processor": post_processor,
-                "output_folder": output_folder, "units": output_units}
+        return {
+            "setup": setup_name,
+            "post_processor": post_processor,
+            "output_folder": output_folder,
+            "units": output_units,
+        }
 
     # ------------------------------------------------------------------
     # Health check
@@ -2268,8 +2660,11 @@ class CommandHandler:
         if design_type == "parametric":
             target = adsk.fusion.DesignTypes.ParametricDesignType
             if current == target:
-                return {"changed": False, "design_type": "parametric",
-                        "message": "Already in parametric mode"}
+                return {
+                    "changed": False,
+                    "design_type": "parametric",
+                    "message": "Already in parametric mode",
+                }
             design.designType = target
             adsk.doEvents()
             # Verify it actually changed
@@ -2283,16 +2678,18 @@ class CommandHandler:
         elif design_type == "direct":
             target = adsk.fusion.DesignTypes.DirectDesignType
             if current == target:
-                return {"changed": False, "design_type": "direct",
-                        "message": "Already in direct mode"}
+                return {
+                    "changed": False,
+                    "design_type": "direct",
+                    "message": "Already in direct mode",
+                }
             design.designType = target
             adsk.doEvents()
             return {"changed": True, "design_type": "direct"}
 
         else:
             raise RuntimeError(
-                f"Invalid design_type '{design_type}'. "
-                f"Use 'parametric' or 'direct'."
+                f"Invalid design_type '{design_type}'. Use 'parametric' or 'direct'."
             )
 
     # ------------------------------------------------------------------
@@ -2324,10 +2721,13 @@ class CommandHandler:
             last_node = tree.body.pop()
             if tree.body:
                 with redirect_stdout(buf):
-                    exec(compile(ast.Module(body=tree.body, type_ignores=[]),
-                                 "<mcp>", "exec"), ns)
-            expr_code = compile(ast.Expression(body=last_node.value),
-                                "<mcp>", "eval")
+                    exec(
+                        compile(
+                            ast.Module(body=tree.body, type_ignores=[]), "<mcp>", "exec"
+                        ),
+                        ns,
+                    )
+            expr_code = compile(ast.Expression(body=last_node.value), "<mcp>", "eval")
             with redirect_stdout(buf):
                 last_expr_value = eval(expr_code, ns)
         else:
@@ -2351,6 +2751,7 @@ class CommandHandler:
         if result is not None:
             try:
                 import json as _json
+
                 _json.dumps(result)
             except (TypeError, ValueError):
                 result = str(result)
@@ -2381,3 +2782,191 @@ class CommandHandler:
             "min": [bbox.minPoint.x, bbox.minPoint.y, bbox.minPoint.z],
             "max": [bbox.maxPoint.x, bbox.maxPoint.y, bbox.maxPoint.z],
         }
+
+    # ------------------------------------------------------------------
+    # Mutation snapshot (before/after deltas for feedback)
+    # ------------------------------------------------------------------
+
+    def _snapshot(self) -> dict | None:
+        """Capture body_count, overall bbox, and total mass of the design.
+
+        Best-effort — returns None if the design isn't readable yet.  Mass
+        is reported in grams; bbox in cm (Fusion's internal unit).
+        """
+        try:
+            design = self.app.activeProduct
+            if design is None or not hasattr(design, "rootComponent"):
+                return None
+            root = design.rootComponent
+
+            # Count bodies recursively (root + occurrences).
+            body_count = root.bRepBodies.count
+            try:
+                for occ in design.rootComponent.allOccurrences:
+                    body_count += occ.bRepBodies.count
+            except Exception:
+                pass  # allOccurrences can fail on empty designs
+
+            bbox_dict = None
+            if body_count > 0:
+                try:
+                    bbox = root.boundingBox
+                    if bbox is not None:
+                        bbox_dict = self._bbox_dict(bbox)
+                except Exception:
+                    bbox_dict = None
+
+            mass_g = 0.0
+            if body_count > 0:
+                try:
+                    # physicalProperties.mass is in kg
+                    mass_g = float(root.physicalProperties.mass) * 1000.0
+                except Exception:
+                    mass_g = 0.0
+
+            return {
+                "body_count": body_count,
+                "bbox": bbox_dict,
+                "mass_g": mass_g,
+            }
+        except Exception as exc:
+            log.debug("snapshot failed: %s", exc)
+            return None
+
+    @staticmethod
+    def _compute_deltas(before: dict, after: dict) -> dict:
+        """Return a diff suitable for an agent: counts + masses + bboxes."""
+        return {
+            "body_count_before": before.get("body_count", 0),
+            "body_count_after": after.get("body_count", 0),
+            "body_count_delta": after.get("body_count", 0)
+            - before.get("body_count", 0),
+            "mass_g_before": before.get("mass_g", 0.0),
+            "mass_g_after": after.get("mass_g", 0.0),
+            "mass_g_delta": after.get("mass_g", 0.0) - before.get("mass_g", 0.0),
+            "bbox_before": before.get("bbox"),
+            "bbox_after": after.get("bbox"),
+        }
+
+    # ------------------------------------------------------------------
+    # Viewport render (perception)
+    # ------------------------------------------------------------------
+
+    def render_view(
+        self,
+        view: str = "current",
+        width: int = 1024,
+        height: int = 768,
+        fit: bool = True,
+    ):
+        """Save the active viewport to a PNG and return base64-encoded bytes.
+
+        * ``view`` — ``"current"`` keeps the existing camera, or one of
+          ``_VIEW_DIRS`` keys (iso, front, top, ...) to reposition first.
+        * ``width``/``height`` — pixel dimensions.
+        * ``fit`` — call viewport.fit() before capture so the model frames.
+
+        If ``view != "current"``, the camera is restored to its prior state
+        before returning so the user's view isn't disturbed.
+        """
+        viewport = self.app.activeViewport
+        if viewport is None:
+            raise RuntimeError("No active viewport")
+
+        repositioned = view != "current"
+        if repositioned:
+            spec = self._VIEW_DIRS.get(view)
+            if spec is None:
+                raise RuntimeError(
+                    f"Unknown view '{view}'. "
+                    f"Expected: current, {', '.join(self._VIEW_DIRS)}"
+                )
+            orig = viewport.camera
+            orig_state = {
+                "eye": (orig.eye.x, orig.eye.y, orig.eye.z),
+                "target": (orig.target.x, orig.target.y, orig.target.z),
+                "up": (orig.upVector.x, orig.upVector.y, orig.upVector.z),
+                "type": orig.cameraType,
+            }
+            self._orient_camera(viewport, spec)
+
+        try:
+            if fit:
+                try:
+                    viewport.fit()
+                except Exception:
+                    pass  # fit() can fail on empty designs; keep going
+
+            # saveAsImageFile requires a real path; write to a tempfile.
+            fd, path = tempfile.mkstemp(suffix=".png", prefix="fusion_render_")
+            os.close(fd)
+            try:
+                ok = viewport.saveAsImageFile(path, int(width), int(height))
+                if not ok or not os.path.exists(path):
+                    raise RuntimeError("saveAsImageFile returned false")
+                with open(path, "rb") as f:
+                    data = f.read()
+            finally:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+        finally:
+            if repositioned:
+                cam = viewport.camera
+                cam.isSmoothTransition = False
+                cam.cameraType = orig_state["type"]
+                cam.eye = adsk.core.Point3D.create(*orig_state["eye"])
+                cam.target = adsk.core.Point3D.create(*orig_state["target"])
+                cam.upVector = adsk.core.Vector3D.create(*orig_state["up"])
+                viewport.camera = cam
+
+        return {
+            "view": view,
+            "width": int(width),
+            "height": int(height),
+            "image_format": "png",
+            "image_base64": base64.b64encode(data).decode("ascii"),
+            "bytes": len(data),
+        }
+
+    def _orient_camera(self, viewport, spec):
+        """Position the camera at a canonical view relative to the model.
+
+        ``spec`` is ``(eye_dir, up_vec)`` from ``_VIEW_DIRS``.
+        """
+        eye_dir, up_vec = spec
+        design = self.app.activeProduct
+        root = design.rootComponent if design is not None else None
+
+        # Target is the model centroid (or origin if no bodies).
+        target = adsk.core.Point3D.create(0.0, 0.0, 0.0)
+        distance = 20.0
+        if root is not None and root.bRepBodies.count > 0:
+            try:
+                bbox = root.boundingBox
+                if bbox is not None:
+                    cx = (bbox.minPoint.x + bbox.maxPoint.x) * 0.5
+                    cy = (bbox.minPoint.y + bbox.maxPoint.y) * 0.5
+                    cz = (bbox.minPoint.z + bbox.maxPoint.z) * 0.5
+                    target = adsk.core.Point3D.create(cx, cy, cz)
+                    dx = bbox.maxPoint.x - bbox.minPoint.x
+                    dy = bbox.maxPoint.y - bbox.minPoint.y
+                    dz = bbox.maxPoint.z - bbox.minPoint.z
+                    distance = max(dx, dy, dz, 1.0) * 2.5
+            except Exception:
+                pass
+
+        eye = adsk.core.Point3D.create(
+            target.x + eye_dir[0] * distance,
+            target.y + eye_dir[1] * distance,
+            target.z + eye_dir[2] * distance,
+        )
+        up = adsk.core.Vector3D.create(up_vec[0], up_vec[1], up_vec[2])
+
+        cam = viewport.camera
+        cam.eye = eye
+        cam.target = target
+        cam.upVector = up
+        cam.isSmoothTransition = False
+        viewport.camera = cam

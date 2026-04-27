@@ -22,11 +22,13 @@ class TestSendRouting:
     def test_mock_mode_all_tools_succeed(self):
         """Every registered tool should succeed through mock routing."""
         from fusion360_mcp.tools import TOOLS
+
         for tool in TOOLS:
             result = _send("mock", tool["name"], {})
             assert isinstance(result, dict)
             assert result.get("mode") == "mock", (
-                f"Tool {tool['name']} missing mode=mock in mock response")
+                f"Tool {tool['name']} missing mode=mock in mock response"
+            )
 
     def test_socket_mode_calls_connection(self):
         """Socket mode should use the TCP connection, not mock."""
@@ -78,36 +80,45 @@ class TestToolAnnotations:
 
     def test_all_tools_have_annotations(self):
         from fusion360_mcp.tools import TOOLS
+
         for t in TOOLS:
             ann = t.get("annotations")
-            assert ann is not None, (
-                f"Tool {t['name']} missing annotations")
+            assert ann is not None, f"Tool {t['name']} missing annotations"
             assert "readOnlyHint" in ann
             assert "destructiveHint" in ann
             assert "idempotentHint" in ann
 
     def test_read_only_tools(self):
         from fusion360_mcp.tools import TOOLS
+
         read_only_names = {
-            "get_scene_info", "get_object_info", "list_components",
-            "get_parameters", "get_physical_properties",
-            "measure_distance", "measure_angle",
-            "check_interference", "ping",
-            "cam_list_setups", "cam_list_operations",
+            "get_scene_info",
+            "get_object_info",
+            "list_components",
+            "get_parameters",
+            "get_physical_properties",
+            "measure_distance",
+            "measure_angle",
+            "check_interference",
+            "ping",
+            "cam_list_setups",
+            "cam_list_operations",
             "cam_get_operation_info",
             "get_design_type",
+            "render_view",
         }
         for t in TOOLS:
             ann = t["annotations"]
             if t["name"] in read_only_names:
-                assert ann["readOnlyHint"] is True, (
-                    f"{t['name']} should be readOnly")
+                assert ann["readOnlyHint"] is True, f"{t['name']} should be readOnly"
             else:
                 assert ann["readOnlyHint"] is False, (
-                    f"{t['name']} should not be readOnly")
+                    f"{t['name']} should not be readOnly"
+                )
 
     def test_destructive_tools(self):
         from fusion360_mcp.tools import TOOLS
+
         destructive = {"delete_all", "delete_parameter"}
         for t in TOOLS:
             ann = t["annotations"]
@@ -118,10 +129,12 @@ class TestToolAnnotations:
 
     def test_annotations_in_mcp_tool_objects(self):
         from fusion360_mcp.tools import get_tool_list
+
         tools = get_tool_list()
         for tool in tools:
             assert tool.annotations is not None, (
-                f"MCP Tool {tool.name} missing annotations")
+                f"MCP Tool {tool.name} missing annotations"
+            )
 
 
 class TestMCPPrompts:
@@ -133,6 +146,7 @@ class TestMCPPrompts:
         # verify the prompt data is importable and structured.
         # This is a basic smoke test.
         import mcp.types as types
+
         assert hasattr(types, "Prompt")
         assert hasattr(types, "PromptArgument")
         assert hasattr(types, "GetPromptResult")
@@ -172,6 +186,7 @@ class TestResourceTemplates:
 
     def test_resource_template_types(self):
         import mcp.types as types
+
         assert hasattr(types, "ResourceTemplate")
 
     def test_body_template_read(self):
@@ -188,12 +203,14 @@ class TestResourceTemplates:
     def test_body_uri_regex_match(self):
         """The body URI regex should extract the name."""
         import re
+
         m = re.match(r"^fusion360://body/(.+)$", "fusion360://body/Box1")
         assert m is not None
         assert m.group(1) == "Box1"
 
     def test_component_uri_regex_match(self):
         import re
+
         m = re.match(
             r"^fusion360://component/(.+)$",
             "fusion360://component/Arm",
@@ -208,25 +225,19 @@ class TestStructuredErrors:
     def test_error_detection_status_field(self):
         """Results with status='error' should be flagged."""
         result = {"status": "error", "message": "Something failed"}
-        is_error = (
-            result.get("status") == "error" or "error" in result
-        )
+        is_error = result.get("status") == "error" or "error" in result
         assert is_error
 
     def test_error_detection_error_key(self):
         """Results with an 'error' key should be flagged."""
         result = {"error": "Connection lost"}
-        is_error = (
-            result.get("status") == "error" or "error" in result
-        )
+        is_error = result.get("status") == "error" or "error" in result
         assert is_error
 
     def test_success_not_flagged(self):
         """Normal results should not be flagged as errors."""
         result = {"status": "ok", "body_name": "Box"}
-        is_error = (
-            result.get("status") == "error" or "error" in result
-        )
+        is_error = result.get("status") == "error" or "error" in result
         assert not is_error
 
 
@@ -270,12 +281,19 @@ class TestResourceTemplateReads:
 
     def test_static_uri_does_not_match_templates(self):
         """Static URIs should not match template patterns."""
-        for static in ["fusion360://status", "fusion360://design",
-                        "fusion360://parameters"]:
+        for static in [
+            "fusion360://status",
+            "fusion360://design",
+            "fusion360://parameters",
+        ]:
             assert re.match(r"^fusion360://body/(.+)$", static) is None
-            assert re.match(
-                r"^fusion360://component/(.+)$", static,
-            ) is None
+            assert (
+                re.match(
+                    r"^fusion360://component/(.+)$",
+                    static,
+                )
+                is None
+            )
 
     def test_unknown_uri_does_not_match(self):
         uri = "fusion360://unknown/thing"
@@ -355,24 +373,18 @@ class TestErrorDetectionEdgeCases:
     def test_result_with_error_key_but_false_value(self):
         """A result with error=None should still flag."""
         result = {"error": None, "body_name": "Box"}
-        is_error = (
-            result.get("status") == "error" or "error" in result
-        )
+        is_error = result.get("status") == "error" or "error" in result
         # "error" key exists, even if value is falsy
         assert is_error
 
     def test_result_with_status_ok_and_no_error(self):
         result = {"status": "ok", "body_name": "Box"}
-        is_error = (
-            result.get("status") == "error" or "error" in result
-        )
+        is_error = result.get("status") == "error" or "error" in result
         assert not is_error
 
     def test_empty_dict_not_flagged(self):
         result = {}
-        is_error = (
-            result.get("status") == "error" or "error" in result
-        )
+        is_error = result.get("status") == "error" or "error" in result
         assert not is_error
 
     def test_non_dict_result(self):
@@ -380,9 +392,7 @@ class TestErrorDetectionEdgeCases:
         result = "some string"
         is_error = False
         if isinstance(result, dict):
-            is_error = (
-                result.get("status") == "error" or "error" in result
-            )
+            is_error = result.get("status") == "error" or "error" in result
         assert not is_error
 
 
@@ -392,6 +402,7 @@ class TestMockDispatchCompleteness:
     def test_every_tool_has_handler(self):
         from fusion360_mcp.mock import _DISPATCH
         from fusion360_mcp.tools import TOOLS
+
         tool_names = {t["name"] for t in TOOLS}
         dispatch_names = set(_DISPATCH.keys())
         missing = tool_names - dispatch_names
@@ -400,6 +411,7 @@ class TestMockDispatchCompleteness:
     def test_no_extra_handlers(self):
         from fusion360_mcp.mock import _DISPATCH
         from fusion360_mcp.tools import TOOLS
+
         tool_names = {t["name"] for t in TOOLS}
         dispatch_names = set(_DISPATCH.keys())
         extra = dispatch_names - tool_names
@@ -408,6 +420,7 @@ class TestMockDispatchCompleteness:
     def test_dispatch_count_matches_tool_count(self):
         from fusion360_mcp.mock import _DISPATCH
         from fusion360_mcp.tools import TOOLS
+
         assert len(_DISPATCH) == len(TOOLS)
 
 
@@ -416,31 +429,29 @@ class TestAnnotationConsistency:
 
     def test_all_read_only_tools_exist(self):
         from fusion360_mcp.tools import _READ_ONLY, TOOLS
+
         tool_names = {t["name"] for t in TOOLS}
         missing = _READ_ONLY - tool_names
-        assert not missing, (
-            f"Read-only set references nonexistent tools: {missing}"
-        )
+        assert not missing, f"Read-only set references nonexistent tools: {missing}"
 
     def test_all_destructive_tools_exist(self):
         from fusion360_mcp.tools import _DESTRUCTIVE, TOOLS
+
         tool_names = {t["name"] for t in TOOLS}
         missing = _DESTRUCTIVE - tool_names
-        assert not missing, (
-            f"Destructive set references nonexistent tools: {missing}"
-        )
+        assert not missing, f"Destructive set references nonexistent tools: {missing}"
 
     def test_all_idempotent_tools_exist(self):
         from fusion360_mcp.tools import _IDEMPOTENT, TOOLS
+
         tool_names = {t["name"] for t in TOOLS}
         missing = _IDEMPOTENT - tool_names
-        assert not missing, (
-            f"Idempotent set references nonexistent tools: {missing}"
-        )
+        assert not missing, f"Idempotent set references nonexistent tools: {missing}"
 
     def test_read_only_implies_idempotent(self):
         """Every read-only tool should also be idempotent."""
         from fusion360_mcp.tools import _IDEMPOTENT, _READ_ONLY
+
         not_idempotent = _READ_ONLY - _IDEMPOTENT
         assert not not_idempotent, (
             f"Read-only tools not marked idempotent: {not_idempotent}"
@@ -449,7 +460,6 @@ class TestAnnotationConsistency:
     def test_destructive_not_read_only(self):
         """No tool should be both destructive and read-only."""
         from fusion360_mcp.tools import _DESTRUCTIVE, _READ_ONLY
+
         overlap = _DESTRUCTIVE & _READ_ONLY
-        assert not overlap, (
-            f"Tools marked both destructive and read-only: {overlap}"
-        )
+        assert not overlap, f"Tools marked both destructive and read-only: {overlap}"

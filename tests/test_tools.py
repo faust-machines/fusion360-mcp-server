@@ -101,6 +101,7 @@ def test_expected_tools_present():
         # export
         "export_step",
         "export_f3d",
+        "export_view_sheet",
         # parameters
         "get_parameters",
         "create_parameter",

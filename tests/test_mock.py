@@ -258,6 +258,28 @@ class TestMockExport:
         result = mock_command("export_f3d", {})
         assert "file_path" in result
 
+    def test_export_view_sheet_defaults(self):
+        result = mock_command("export_view_sheet", {})
+        assert result["html_path"].endswith("view_sheet.html")
+        assert result["image_size"] == [1200, 900]
+        view_names = [v["view"] for v in result["views"]]
+        assert view_names == ["iso", "front", "top", "right"]
+        for v in result["views"]:
+            assert v["path"].endswith(f"{v['view']}.png")
+
+    def test_export_view_sheet_custom(self):
+        result = mock_command("export_view_sheet", {
+            "title": "Orb v0.4",
+            "views": ["iso", "front", "right"],
+            "image_size": [1920, 1080],
+            "output_dir": "/tmp/orb_views",
+        })
+        assert result["title"] == "Orb v0.4"
+        assert result["image_size"] == [1920, 1080]
+        assert result["output_dir"] == "/tmp/orb_views"
+        assert [v["view"] for v in result["views"]] == \
+            ["iso", "front", "right"]
+
 
 class TestMockParameters:
     def test_get_parameters(self):

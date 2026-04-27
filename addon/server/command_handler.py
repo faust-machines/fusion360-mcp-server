@@ -39,6 +39,21 @@ class CommandHandler:
 
     _COMMANDS = None  # populated lazily
 
+    # Canonical camera presets, (eye_dir, up_vec) in Fusion's Z-up world.
+    # Shared by render_view and export_view_sheet.
+    _VIEW_DIRS = {
+        "iso": ((1.0, -1.0, 1.0), (0.0, 0.0, 1.0)),
+        "iso_ne": ((1.0, 1.0, 1.0), (0.0, 0.0, 1.0)),
+        "iso_nw": ((-1.0, 1.0, 1.0), (0.0, 0.0, 1.0)),
+        "iso_sw": ((-1.0, -1.0, 1.0), (0.0, 0.0, 1.0)),
+        "front": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+        "back": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        "top": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
+        "bottom": ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
+        "right": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        "left": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+    }
+
     # Commands that can change body mass / bbox / body count.  Only these
     # get before/after snapshots so agents can sanity-check without a render.
     _MUTATION_COMMANDS = frozenset(
@@ -1426,20 +1441,6 @@ class CommandHandler:
     # Render canonical views (iso/front/top/right/...) as PNGs and emit
     # a self-contained HTML page suitable for print-to-PDF. Intended
     # audience: mechanical engineers who want a quick sense of the part.
-
-    # Unit vectors per view: (eye_dir, up). Fusion's world is Z-up.
-    _VIEW_DIRS = {
-        "iso": ((1.0, -1.0, 1.0), (0.0, 0.0, 1.0)),
-        "iso_ne": ((1.0, 1.0, 1.0), (0.0, 0.0, 1.0)),
-        "iso_nw": ((-1.0, 1.0, 1.0), (0.0, 0.0, 1.0)),
-        "iso_sw": ((-1.0, -1.0, 1.0), (0.0, 0.0, 1.0)),
-        "front": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
-        "back": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
-        "top": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
-        "bottom": ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
-        "right": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-        "left": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-    }
 
     def _scene_center_and_radius(self):
         """Return (center, radius) covering all visible root bodies."""
@@ -2851,18 +2852,6 @@ class CommandHandler:
     # Viewport render (perception)
     # ------------------------------------------------------------------
 
-    # Canonical named views in Fusion's coordinate system.
-    # Each entry: (eye_dx, eye_dy, eye_dz, up_x, up_y, up_z) relative to target.
-    _NAMED_VIEWS = {
-        "iso": (1.0, -1.0, 1.0, 0.0, 0.0, 1.0),
-        "front": (0.0, -1.0, 0.0, 0.0, 0.0, 1.0),
-        "back": (0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
-        "top": (0.0, 0.0, 1.0, 0.0, 1.0, 0.0),
-        "bottom": (0.0, 0.0, -1.0, 0.0, 1.0, 0.0),
-        "left": (-1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
-        "right": (1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
-    }
-
     def render_view(
         self,
         view: str = "current",
@@ -2873,43 +2862,64 @@ class CommandHandler:
         """Save the active viewport to a PNG and return base64-encoded bytes.
 
         * ``view`` — ``"current"`` keeps the existing camera, or one of
-          ``iso|front|back|top|bottom|left|right`` to reposition first.
+          ``_VIEW_DIRS`` keys (iso, front, top, ...) to reposition first.
         * ``width``/``height`` — pixel dimensions.
         * ``fit`` — call viewport.fit() before capture so the model frames.
+
+        If ``view != "current"``, the camera is restored to its prior state
+        before returning so the user's view isn't disturbed.
         """
         viewport = self.app.activeViewport
         if viewport is None:
             raise RuntimeError("No active viewport")
 
-        if view != "current":
-            spec = self._NAMED_VIEWS.get(view)
+        repositioned = view != "current"
+        if repositioned:
+            spec = self._VIEW_DIRS.get(view)
             if spec is None:
                 raise RuntimeError(
                     f"Unknown view '{view}'. "
-                    f"Expected: current, {', '.join(self._NAMED_VIEWS)}"
+                    f"Expected: current, {', '.join(self._VIEW_DIRS)}"
                 )
+            orig = viewport.camera
+            orig_state = {
+                "eye": (orig.eye.x, orig.eye.y, orig.eye.z),
+                "target": (orig.target.x, orig.target.y, orig.target.z),
+                "up": (orig.upVector.x, orig.upVector.y, orig.upVector.z),
+                "type": orig.cameraType,
+            }
             self._orient_camera(viewport, spec)
 
-        if fit:
-            try:
-                viewport.fit()
-            except Exception:
-                pass  # fit() can fail on empty designs; keep going
-
-        # saveAsImageFile requires a real path; write to a tempfile.
-        fd, path = tempfile.mkstemp(suffix=".png", prefix="fusion_render_")
-        os.close(fd)
         try:
-            ok = viewport.saveAsImageFile(path, int(width), int(height))
-            if not ok or not os.path.exists(path):
-                raise RuntimeError("saveAsImageFile returned false")
-            with open(path, "rb") as f:
-                data = f.read()
-        finally:
+            if fit:
+                try:
+                    viewport.fit()
+                except Exception:
+                    pass  # fit() can fail on empty designs; keep going
+
+            # saveAsImageFile requires a real path; write to a tempfile.
+            fd, path = tempfile.mkstemp(suffix=".png", prefix="fusion_render_")
+            os.close(fd)
             try:
-                os.remove(path)
-            except Exception:
-                pass
+                ok = viewport.saveAsImageFile(path, int(width), int(height))
+                if not ok or not os.path.exists(path):
+                    raise RuntimeError("saveAsImageFile returned false")
+                with open(path, "rb") as f:
+                    data = f.read()
+            finally:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+        finally:
+            if repositioned:
+                cam = viewport.camera
+                cam.isSmoothTransition = False
+                cam.cameraType = orig_state["type"]
+                cam.eye = adsk.core.Point3D.create(*orig_state["eye"])
+                cam.target = adsk.core.Point3D.create(*orig_state["target"])
+                cam.upVector = adsk.core.Vector3D.create(*orig_state["up"])
+                viewport.camera = cam
 
         return {
             "view": view,
@@ -2921,7 +2931,11 @@ class CommandHandler:
         }
 
     def _orient_camera(self, viewport, spec):
-        """Position the camera at a canonical view relative to the model."""
+        """Position the camera at a canonical view relative to the model.
+
+        ``spec`` is ``(eye_dir, up_vec)`` from ``_VIEW_DIRS``.
+        """
+        eye_dir, up_vec = spec
         design = self.app.activeProduct
         root = design.rootComponent if design is not None else None
 
@@ -2944,11 +2958,11 @@ class CommandHandler:
                 pass
 
         eye = adsk.core.Point3D.create(
-            target.x + spec[0] * distance,
-            target.y + spec[1] * distance,
-            target.z + spec[2] * distance,
+            target.x + eye_dir[0] * distance,
+            target.y + eye_dir[1] * distance,
+            target.z + eye_dir[2] * distance,
         )
-        up = adsk.core.Vector3D.create(spec[3], spec[4], spec[5])
+        up = adsk.core.Vector3D.create(up_vec[0], up_vec[1], up_vec[2])
 
         cam = viewport.camera
         cam.eye = eye

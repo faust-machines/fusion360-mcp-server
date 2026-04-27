@@ -112,7 +112,9 @@ _RULES: list[tuple[str, str, list[str]]] = [
         ],
     ),
     (
-        r"parametric|direct[- ]edit",
+        r"requires (?:parametric|direct[- ]edit)|"
+        r"not (?:supported|permitted|allowed) in (?:parametric|direct[- ]edit)|"
+        r"switch to (?:parametric|direct[- ]edit)",
         "DESIGN_TYPE_MISMATCH",
         [
             "This operation is not permitted in the current design type.",

@@ -518,10 +518,14 @@ class CommandHandler:
 
     def get_bounding_box(self, name: str):
         """Axis-aligned bounding box for a body or component. Values in cm."""
+
         def _payload(obj_type, mn, mx):
             return {
-                "found": True, "type": obj_type, "name": name,
-                "min": mn, "max": mx,
+                "found": True,
+                "type": obj_type,
+                "name": name,
+                "min": mn,
+                "max": mx,
                 "size": [mx[i] - mn[i] for i in range(3)],
                 "center": [(mn[i] + mx[i]) / 2 for i in range(3)],
             }
@@ -563,8 +567,7 @@ class CommandHandler:
             _extend(occ.bRepBodies)
 
         if mn[0] == float("inf"):
-            return {"found": True, "type": "component",
-                    "name": name, "empty": True}
+            return {"found": True, "type": "component", "name": name, "empty": True}
 
         return _payload("component", mn, mx)
 
@@ -1708,15 +1711,15 @@ class CommandHandler:
             "image_size": [width, height],
         }
 
-    def export(self, format: str = None, body_name: str = None,
-               file_path: str = None):
+    def export(self, format: str = None, body_name: str = None, file_path: str = None):
         """Unified export — dispatches to export_stl/export_step/export_f3d."""
         fmt = format.lower() if format else None
         if not fmt and file_path:
             fmt = os.path.splitext(file_path)[1].lstrip(".").lower()
         if not fmt:
             raise RuntimeError(
-                "Specify format (stl/step/f3d) or file_path with extension")
+                "Specify format (stl/step/f3d) or file_path with extension"
+            )
 
         if fmt == "stl":
             if not body_name:
@@ -1729,29 +1732,30 @@ class CommandHandler:
         if fmt == "f3d":
             return self.export_f3d(file_path)
 
-        raise RuntimeError(
-            f"Unknown format: {fmt}. Expected: stl, step, f3d")
+        raise RuntimeError(f"Unknown format: {fmt}. Expected: stl, step, f3d")
 
-    def import_mesh(self, file_path: str, component_name: str = None,
-                    units: str = "mm"):
+    def import_mesh(
+        self, file_path: str, component_name: str = None, units: str = "mm"
+    ):
         """Import mesh file (STL/OBJ/3MF) as mesh body. Values returned in cm."""
         if not os.path.exists(file_path):
             raise RuntimeError(f"Mesh file not found: {file_path}")
 
-        target = (self._component_by_name(component_name)
-                  if component_name else self._root())
+        target = (
+            self._component_by_name(component_name) if component_name else self._root()
+        )
 
         unit_map = {
             "mm": adsk.fusion.MeshUnits.MillimeterMeshUnit,
             "cm": adsk.fusion.MeshUnits.CentimeterMeshUnit,
-            "m":  adsk.fusion.MeshUnits.MeterMeshUnit,
+            "m": adsk.fusion.MeshUnits.MeterMeshUnit,
             "in": adsk.fusion.MeshUnits.InchMeshUnit,
             "ft": adsk.fusion.MeshUnits.FootMeshUnit,
         }
         if units not in unit_map:
             raise RuntimeError(
-                f"Unknown units '{units}'. "
-                f"Expected one of: {sorted(unit_map)}")
+                f"Unknown units '{units}'. Expected one of: {sorted(unit_map)}"
+            )
 
         mesh_body = target.meshBodies.addByFile(file_path, unit_map[units])
 
@@ -1877,21 +1881,27 @@ class CommandHandler:
 
         return {"created": True, "length": length, "width": width, "height": height}
 
-    def create_box_parametric(self, length, width, height,
-                              origin_x: float = 0.0,
-                              origin_y: float = 0.0,
-                              origin_z: float = 0.0,
-                              plane: str = "xy",
-                              component_name: str = None,
-                              body_name: str = None):
+    def create_box_parametric(
+        self,
+        length,
+        width,
+        height,
+        origin_x: float = 0.0,
+        origin_y: float = 0.0,
+        origin_z: float = 0.0,
+        plane: str = "xy",
+        component_name: str = None,
+        body_name: str = None,
+    ):
         """Parametric box: sketch rectangle + dimensions + extrude.
 
         length/width/height may be numeric (cm) or string expressions
         (e.g. 'boxL', '56 mm'). Expressions are applied via Fusion's
         parameter system so later changes to User Parameters propagate.
         """
-        comp = (self._component_by_name(component_name)
-                if component_name else self._root())
+        comp = (
+            self._component_by_name(component_name) if component_name else self._root()
+        )
 
         base_plane = self._construction_plane(plane)
         if origin_z != 0:
@@ -1908,8 +1918,8 @@ class CommandHandler:
 
         p1 = adsk.core.Point3D.create(origin_x, origin_y, 0)
         p2 = adsk.core.Point3D.create(
-            origin_x + _initial(length),
-            origin_y + _initial(width), 0)
+            origin_x + _initial(length), origin_y + _initial(width), 0
+        )
         rect = sketch.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2)
 
         dims = sketch.sketchDimensions
@@ -1923,16 +1933,20 @@ class CommandHandler:
 
         bottom = rect.item(0)
         length_dim = dims.addDistanceDimension(
-            bottom.startSketchPoint, bottom.endSketchPoint,
+            bottom.startSketchPoint,
+            bottom.endSketchPoint,
             adsk.fusion.DimensionOrientations.HorizontalDimensionOrientation,
-            text_pt)
+            text_pt,
+        )
         _set_dim(length_dim, length)
 
         right = rect.item(1)
         width_dim = dims.addDistanceDimension(
-            right.startSketchPoint, right.endSketchPoint,
+            right.startSketchPoint,
+            right.endSketchPoint,
             adsk.fusion.DimensionOrientations.VerticalDimensionOrientation,
-            text_pt)
+            text_pt,
+        )
         _set_dim(width_dim, width)
 
         if sketch.profiles.count == 0:
@@ -1941,8 +1955,8 @@ class CommandHandler:
 
         ext_feats = comp.features.extrudeFeatures
         ext_input = ext_feats.createInput(
-            profile,
-            adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+            profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation
+        )
         if isinstance(height, (int, float)):
             h_vi = adsk.core.ValueInput.createByReal(float(height))
         else:

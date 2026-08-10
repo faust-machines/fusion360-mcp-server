@@ -22,6 +22,7 @@ import adsk.fusion
 
 from . import get_logger
 from . import hints as _hints
+from . import hole_geometry as _hole_geom
 
 log = get_logger("handler")
 
@@ -1116,40 +1117,75 @@ class CommandHandler:
             else root.bRepBodies.item(body_index)
         )
 
-        # Find the target face
-        bbox = body.boundingBox
+        # Find the target face.
+        # Comparing bounding boxes is not enough: the side faces of a box reach
+        # the body's max Z too, so the first "hit" is usually a vertical face.
+        # Require a near-horizontal planar face that points up (or down).
+        if face_selection not in ("top", "bottom"):
+            raise RuntimeError(f"Unknown face_selection '{face_selection}'")
+        want_up = face_selection == "top"
+
         target_face = None
-        if face_selection == "top":
-            threshold = bbox.maxPoint.z - 0.001
-            for face in body.faces:
-                if face.boundingBox.maxPoint.z > threshold:
-                    target_face = face
-                    break
-        elif face_selection == "bottom":
-            threshold = bbox.minPoint.z + 0.001
-            for face in body.faces:
-                if face.boundingBox.minPoint.z < threshold:
-                    target_face = face
-                    break
+        best_key = None
+        for face in body.faces:
+            if adsk.core.Plane.cast(face.geometry) is None:
+                continue
+            # Use the evaluator: it reports the face's outward normal, whereas
+            # the underlying plane's normal ignores the face's orientation.
+            ok, normal = face.evaluator.getNormalAtPoint(face.pointOnFace)
+            if not ok or not _hole_geom.is_horizontal_face(normal.z, want_up):
+                continue
+            # Rank on the face's own extreme Z, not on an arbitrary point on
+            # it: within the tilt tolerance the two are not the same.
+            fbox = face.boundingBox
+            edge_z = fbox.maxPoint.z if want_up else fbox.minPoint.z
+            key = _hole_geom.face_rank_key(edge_z, face.area, want_up)
+            if best_key is None or key > best_key:
+                best_key, target_face = key, face
 
         if target_face is None:
-            raise RuntimeError(f"No face found for selection '{face_selection}'")
+            raise RuntimeError(
+                f"No near-horizontal {face_selection}-facing planar face on "
+                f"'{body.name}'"
+            )
 
-        # Create a sketch point for the hole center
+        # Place the hole centre. center_x / center_y are model-space XY, so the
+        # caller does not have to know the sketch's own coordinate system. Solve
+        # the face's plane for Z rather than reusing an arbitrary point on it.
+        plane = adsk.core.Plane.cast(target_face.geometry)
+        n, o = plane.normal, plane.origin
+        center_z = _hole_geom.plane_z_at(
+            (n.x, n.y, n.z), (o.x, o.y, o.z), center_x, center_y
+        )
         sketch = root.sketches.add(target_face)
-        center = adsk.core.Point3D.create(center_x, center_y, 0)
-        sketch_pt = sketch.sketchPoints.add(center)
+        sketch_pt = sketch.sketchPoints.add(
+            sketch.modelToSketchSpace(
+                adsk.core.Point3D.create(center_x, center_y, center_z)
+            )
+        )
 
-        # Create hole feature
+        # createSimpleInput() takes the DIAMETER -- "A ValueInput object that
+        # defines the diameter of the hole" -- not the radius.
         holes = root.features.holeFeatures
         hole_input = holes.createSimpleInput(
-            adsk.core.ValueInput.createByReal(diameter / 2)
+            adsk.core.ValueInput.createByReal(diameter)
         )
         hole_input.setPositionBySketchPoint(sketch_pt)
         hole_input.setDistanceExtent(adsk.core.ValueInput.createByReal(depth))
+        # Without this the hole cuts every body it happens to intersect.
+        # The property takes a plain list, not an ObjectCollection.
+        hole_input.participantBodies = [body]
 
         feat = holes.add(hole_input)
-        return {"feature_name": feat.name, "diameter": diameter, "depth": depth}
+        return {
+            "feature_name": feat.name,
+            "diameter": diameter,
+            "depth": depth,
+            "actual_diameter": feat.holeDiameter.value,
+            "cut_bodies": [b.name for b in feat.bodies],
+            # Where the request resolved to, not a measurement of the feature.
+            "resolved_center": [center_x, center_y, center_z],
+        }
 
     def rectangular_pattern(
         self,

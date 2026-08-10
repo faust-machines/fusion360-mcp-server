@@ -1757,7 +1757,14 @@ class CommandHandler:
                 f"Unknown units '{units}'. Expected one of: {sorted(unit_map)}"
             )
 
-        mesh_body = target.meshBodies.addByFile(file_path, unit_map[units])
+        mesh_bodies = target.meshBodies
+        if hasattr(mesh_bodies, "addByFile"):
+            mesh_body = mesh_bodies.addByFile(file_path, unit_map[units])
+        else:
+            # Current Fusion API: MeshBodies.add() (addByFile was removed).
+            # add() returns a MeshBodyList; take the first body.
+            added = mesh_bodies.add(file_path, unit_map[units])
+            mesh_body = added.item(0) if hasattr(added, "item") else added
 
         bb = mesh_body.boundingBox
         return {

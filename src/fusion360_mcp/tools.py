@@ -738,10 +738,16 @@ TOOLS: list[dict] = [
             "required": ["name", "value", "unit"],
             "properties": {
                 "name": {"type": "string", "description": "Parameter name"},
-                "value": {"type": "number", "description": "Numeric value"},
+                "value": {
+                    "type": "number",
+                    "description": "Numeric value, expressed in `unit`",
+                },
                 "unit": {
                     "type": "string",
-                    "description": "Unit expression (e.g. 'mm', 'cm', 'in', 'deg')",
+                    "description": (
+                        "Unit the value is given in (e.g. 'mm', 'cm', 'in', "
+                        "'deg'). Empty means unitless."
+                    ),
                 },
                 "comment": {"type": "string", "description": "Optional comment"},
             },
@@ -756,7 +762,13 @@ TOOLS: list[dict] = [
             "required": ["name", "value"],
             "properties": {
                 "name": {"type": "string", "description": "Parameter name"},
-                "value": {"type": "number", "description": "New numeric value"},
+                "value": {
+                    "type": "number",
+                    "description": (
+                        "New numeric value, expressed in the unit the "
+                        "parameter already declares"
+                    ),
+                },
             },
         },
     },

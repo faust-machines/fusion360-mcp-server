@@ -445,16 +445,32 @@ def _get_parameters(_p: dict) -> dict:
 
 
 def _create_parameter(p: dict) -> dict:
+    value = p.get("value", 0)
+    # The addon trims the unit and treats blank as unitless; mirror both so
+    # mock and real modes agree. "unit" is required by the schema, so the
+    # default only covers a caller that omitted it entirely.
+    unit = ("mm" if p.get("unit") is None else p["unit"]).strip()
     return {
+        "created": True,
         "name": p.get("name", "param1"),
-        "value": p.get("value", 0),
-        "unit": p.get("unit", "mm"),
+        "value": value,
+        "unit": unit,
+        "expression": f"{value} {unit}" if unit else f"{value}",
         "comment": p.get("comment", ""),
     }
 
 
 def _set_parameter(p: dict) -> dict:
-    return {"name": p.get("name", "param1"), "value": p.get("value", 0)}
+    # The real handler reports the unit the target parameter already declares
+    # and the expression Fusion stored. Mock mode holds no design, so it
+    # cannot know either -- report null rather than invent "mm".
+    return {
+        "updated": True,
+        "name": p.get("name", "param1"),
+        "value": p.get("value", 0),
+        "unit": None,
+        "expression": None,
+    }
 
 
 def _delete_parameter(p: dict) -> dict:

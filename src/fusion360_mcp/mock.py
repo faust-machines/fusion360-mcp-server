@@ -300,10 +300,16 @@ def _draw_arc(p: dict) -> dict:
 
 
 def _create_hole(p: dict) -> dict:
+    body = p.get("body_name") or f"Body{p.get('body_index', 0) + 1}"
+    diameter = p.get("diameter", 0.5)
     return {
-        "body_name": p.get("body_name", "Body1"),
-        "diameter": p.get("diameter", 0.5),
+        "feature_name": "Hole_mock",
+        "body_name": body,
+        "diameter": diameter,
         "depth": p.get("depth", 1),
+        "actual_diameter": diameter,
+        "cut_bodies": [body],
+        "resolved_center": [p.get("center_x", 0), p.get("center_y", 0), 0.0],
     }
 
 

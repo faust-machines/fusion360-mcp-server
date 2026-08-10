@@ -22,6 +22,7 @@ import adsk.fusion
 
 from . import get_logger
 from . import hints as _hints
+from . import parameter_units as _param_units
 
 log = get_logger("handler")
 
@@ -2428,16 +2429,41 @@ class CommandHandler:
     def create_parameter(self, name: str, value: float, unit: str, comment: str = None):
         design = self._design()
         params = design.userParameters
-        params.add(name, adsk.core.ValueInput.createByReal(value), unit, comment or "")
-        return {"created": True, "name": name, "value": value, "unit": unit}
+        unit = _param_units.normalise_unit(unit)
+        # createByReal() is read in internal units (cm, radians), so a caller
+        # asking for 1000 mm would get 1000 cm labelled "mm".
+        value_input = _param_units.build_value_input(
+            value,
+            unit,
+            adsk.core.ValueInput.createByString,
+            adsk.core.ValueInput.createByReal,
+        )
+        param = params.add(name, value_input, unit, comment or "")
+        return {
+            "created": True,
+            "name": name,
+            "value": value,
+            "unit": unit,
+            "expression": param.expression,
+        }
 
     def set_parameter(self, name: str, value: float):
         design = self._design()
         param = design.userParameters.itemByName(name)
         if not param:
             raise RuntimeError(f"Parameter '{name}' not found")
-        param.value = value
-        return {"updated": True, "name": name, "value": value}
+        # Assigning .value would be read in internal units, silently rescaling
+        # any parameter whose unit is not the internal one. Write the
+        # expression, in the unit the parameter already declares.
+        unit = _param_units.normalise_unit(param.unit)
+        param.expression = _param_units.expression_for(value, unit)
+        return {
+            "updated": True,
+            "name": name,
+            "value": value,
+            "unit": unit,
+            "expression": param.expression,
+        }
 
     def delete_parameter(self, name: str):
         design = self._design()

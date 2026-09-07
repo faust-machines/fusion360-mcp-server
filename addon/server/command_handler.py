@@ -1810,15 +1810,83 @@ class CommandHandler:
         }
 
     def delete_all(self):
+        """Clear the active design: unwind the timeline, then sweep leftovers.
+
+        Returns counts of what was removed plus any per-item failures.  Raises
+        if the design is *not* empty afterwards — a caller that believes this
+        succeeded will happily build on a dirty document.
+        """
         design = self._design()
-        if hasattr(design, "timeline") and design.timeline.count > 0:
-            tl = design.timeline
+        root = design.rootComponent
+        deleted = {"timeline": 0, "bodies": 0, "sketches": 0}
+        errors = []
+
+        # Parametric: unwind newest-first.  NOTE: TimelineObject has no
+        # deleteMe() — that method lives on the *entity* it wraps.  Calling it
+        # on the TimelineObject raises AttributeError on every item.
+        tl = getattr(design, "timeline", None)
+        if tl is not None and tl.count > 0:
             for i in range(tl.count - 1, -1, -1):
+                name = "?"
                 try:
-                    tl.item(i).deleteMe()
-                except Exception:
-                    pass
-        return {"deleted": True}
+                    item = tl.item(i)
+                    name = item.name
+                    entity = item.entity
+                    if entity is None:
+                        errors.append(
+                            {"stage": "timeline", "index": i, "name": name,
+                             "error": "timeline item exposes no entity"}
+                        )
+                        continue
+                    entity.deleteMe()
+                    deleted["timeline"] += 1
+                except Exception as exc:
+                    errors.append(
+                        {"stage": "timeline", "index": i, "name": name,
+                         "error": f"{type(exc).__name__}: {exc}"}
+                    )
+
+        # Direct mode has no timeline; also catches anything the pass above
+        # could not remove.
+        for i in range(root.bRepBodies.count - 1, -1, -1):
+            name = "?"
+            try:
+                body = root.bRepBodies.item(i)
+                name = body.name
+                body.deleteMe()
+                deleted["bodies"] += 1
+            except Exception as exc:
+                errors.append(
+                    {"stage": "body", "index": i, "name": name,
+                     "error": f"{type(exc).__name__}: {exc}"}
+                )
+
+        for i in range(root.sketches.count - 1, -1, -1):
+            name = "?"
+            try:
+                sk = root.sketches.item(i)
+                name = sk.name
+                sk.deleteMe()
+                deleted["sketches"] += 1
+            except Exception as exc:
+                errors.append(
+                    {"stage": "sketch", "index": i, "name": name,
+                     "error": f"{type(exc).__name__}: {exc}"}
+                )
+
+        remaining = {
+            "bodies": root.bRepBodies.count,
+            "sketches": root.sketches.count,
+            "timeline": tl.count if tl is not None else 0,
+        }
+
+        if remaining["bodies"] or remaining["sketches"]:
+            raise RuntimeError(
+                f"delete_all did not clear the design — remaining: {remaining}. "
+                f"Deleted: {deleted}. Failures: {errors}"
+            )
+
+        return {"deleted": deleted, "remaining": remaining, "errors": errors}
 
     def undo(self):
         design = self._design()
@@ -2342,17 +2410,25 @@ class CommandHandler:
         if bodies.count < 2:
             raise RuntimeError("Need at least 2 components with bodies")
 
-        interference = root.interfere(bodies, include_coincident_faces)
+        # Interference analysis is a Design-level API.  Component has no
+        # interfere() method at all, so the previous call raised
+        # AttributeError for every caller.
+        design = self._design()
+        inp = design.createInterferenceInput(bodies)
+        inp.areCoincidentFacesIncluded = bool(include_coincident_faces)
+        interference = design.analyzeInterference(inp)
+
         results = []
-        for i in range(interference.interferenceResultCount):
-            result = interference.interferenceResult(i)
-            results.append(
-                {
-                    "body_one": result.entityOne.name,
-                    "body_two": result.entityTwo.name,
-                    "volume": result.interferenceBody.volume,
-                }
-            )
+        if interference is not None:
+            for i in range(interference.count):
+                result = interference.item(i)
+                results.append(
+                    {
+                        "body_one": result.entityOne.name,
+                        "body_two": result.entityTwo.name,
+                        "volume": result.interferenceBody.volume,
+                    }
+                )
 
         return {"interferences": results, "count": len(results)}
 

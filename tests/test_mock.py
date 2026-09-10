@@ -158,6 +158,28 @@ class TestMockFeatures:
         assert result["mirror_plane"] == "xz"
         assert "new_body_name" in result
 
+    def test_create_hole_reports_the_keys_agents_verify_against(self):
+        # actual_diameter / cut_bodies / resolved_center let a caller check
+        # what was made against what it asked for; mock mode must carry them.
+        result = mock_command(
+            "create_hole",
+            {
+                "diameter": 0.52,
+                "depth": 0.6,
+                "body_name": "Plate",
+                "center_x": 22,
+                "center_y": 1.5,
+            },
+        )
+        assert result["actual_diameter"] == 0.52
+        assert result["cut_bodies"] == ["Plate"]
+        assert result["resolved_center"][:2] == [22, 1.5]
+
+    def test_create_hole_falls_back_to_body_index(self):
+        result = mock_command("create_hole", {"diameter": 0.5, "body_index": 1})
+        assert result["body_name"] == "Body2"
+        assert result["cut_bodies"] == ["Body2"]
+
 
 class TestMockBodyOps:
     def test_move_body(self):

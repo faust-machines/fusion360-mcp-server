@@ -453,9 +453,22 @@ TOOLS: list[dict] = [
                     "type": "string",
                     "enum": ["top", "bottom"],
                     "default": "top",
+                    "description": (
+                        "Drill into the highest up-facing (top) or lowest "
+                        "down-facing (bottom) planar face, which must be "
+                        "near-horizontal (within ~0.6 deg)"
+                    ),
                 },
-                "center_x": {"type": "number", "default": 0},
-                "center_y": {"type": "number", "default": 0},
+                "center_x": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Hole centre X in model space (cm)",
+                },
+                "center_y": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Hole centre Y in model space (cm)",
+                },
             },
         },
     },

@@ -101,6 +101,7 @@ class TestToolAnnotations:
             "measure_distance",
             "measure_angle",
             "check_interference",
+            "compare_meshes",
             "ping",
             "cam_list_setups",
             "cam_list_operations",

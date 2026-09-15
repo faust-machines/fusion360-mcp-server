@@ -113,6 +113,7 @@ def test_expected_tools_present():
         "delete_parameter",
         # sketch constraints & dimensions
         "add_constraint",
+        "auto_constrain",
         "add_dimension",
         # construction geometry
         "create_construction_plane",
@@ -145,6 +146,7 @@ def test_expected_tools_present():
         "get_physical_properties",
         "create_section_analysis",
         "check_interference",
+        "compare_meshes",
         # appearance
         "set_appearance",
         # project geometry

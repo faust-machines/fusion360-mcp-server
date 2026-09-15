@@ -57,6 +57,8 @@ _MUTATION_MOCKS: frozenset[str] = frozenset(
         "set_parameter",
         "execute_code",
         "auto_constrain",
+        "create_ucs",
+        "set_color",
     }
 )
 
@@ -735,6 +737,31 @@ def _compare_meshes(p: dict) -> dict:
     }
 
 
+def _create_ucs(p: dict) -> dict:
+    name = p.get("name", "UCS1")
+    return {
+        "name": name,
+        "origin": [p.get("x", 0), p.get("y", 0), p.get("z", 0)],
+        "angles_deg": [
+            p.get("angle_x", 0),
+            p.get("angle_y", 0),
+            p.get("angle_z", 0),
+        ],
+        "reference_sketch": f"UCS_{name}_ref",
+    }
+
+
+def _set_color(p: dict) -> dict:
+    r, g, b = p.get("red", 255), p.get("green", 0), p.get("blue", 0)
+    alpha = round(p.get("opacity", 1.0) * 255)
+    return {
+        "body": p.get("body_name", "Body1"),
+        "color": [r, g, b],
+        "opacity": p.get("opacity", 1.0),
+        "appearance": f"MCP_{r}_{g}_{b}_{alpha}",
+    }
+
+
 # ── appearance ────────────────────────────────────────────────────────
 
 
@@ -1043,6 +1070,8 @@ _DISPATCH: dict[str, Any] = {
     "create_section_analysis": _create_section_analysis,
     "check_interference": _check_interference,
     "compare_meshes": _compare_meshes,
+    "create_ucs": _create_ucs,
+    "set_color": _set_color,
     # appearance
     "set_appearance": _set_appearance,
     # project geometry

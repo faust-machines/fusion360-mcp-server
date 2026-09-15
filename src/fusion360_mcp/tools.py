@@ -1051,6 +1051,39 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "create_ucs",
+        "title": "Create User Coordinate System",
+        "description": (
+            "Create a UCS at (x, y, z) with optional rotation (Fusion 2026+ "
+            "UCS API, preview). A hidden reference sketch is created to anchor "
+            "the UCS — do not delete it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "UCS name"},
+                "x": {"type": "number", "default": 0, "description": "Origin X (cm)"},
+                "y": {"type": "number", "default": 0, "description": "Origin Y (cm)"},
+                "z": {"type": "number", "default": 0, "description": "Origin Z (cm)"},
+                "angle_x": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Rotation about X (degrees)",
+                },
+                "angle_y": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Rotation about Y (degrees)",
+                },
+                "angle_z": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Rotation about Z (degrees)",
+                },
+            },
+        },
+    },
     # ── splines ────────────────────────────────────────────────────────
     {
         "name": "draw_spline",
@@ -1777,6 +1810,32 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "set_color",
+        "title": "Set Body Color",
+        "description": (
+            "Assign a flat RGB color to a body (creates/reuses a design-local "
+            "appearance). Useful for visually distinguishing parts before "
+            "render_view."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["body_name", "red", "green", "blue"],
+            "properties": {
+                "body_name": {"type": "string", "description": "Body name"},
+                "red": {"type": "integer", "minimum": 0, "maximum": 255},
+                "green": {"type": "integer", "minimum": 0, "maximum": 255},
+                "blue": {"type": "integer", "minimum": 0, "maximum": 255},
+                "opacity": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "default": 1,
+                    "description": "1.0 = opaque, 0.0 = invisible",
+                },
+            },
+        },
+    },
     # ── project geometry ───────────────────────────────────────────────
     {
         "name": "project_geometry",
@@ -2401,6 +2460,7 @@ _IDEMPOTENT = {
     "compare_meshes",
     "set_parameter",
     "set_appearance",
+    "set_color",
     "cam_list_setups",
     "cam_list_operations",
     "cam_get_operation_info",

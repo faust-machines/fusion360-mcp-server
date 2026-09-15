@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is an MCP server (81 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
+This is an MCP server (91 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
 
 1. **MCP Server** (this repo) — speaks MCP protocol over stdio, forwards commands to Fusion via TCP
 2. **Fusion 360 Add-in** — runs inside Fusion, executes commands on the main thread via CustomEvent bridge
@@ -16,7 +16,7 @@ Claude Code ──stdio──> MCP Server ──TCP :9876──> Fusion Add-in �
 
 The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion API calls to the main thread. Socket threads submit work items and block on a per-item `threading.Event` until the main thread completes execution.
 
-## Available tools (80)
+## Available tools (91)
 
 ### Scene & Query
 | Tool | Description |
@@ -37,6 +37,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `draw_spline` | Fit-point or control-point spline |
 | `create_polygon` | Regular polygon (3–64 sides) |
 | `add_constraint` | Geometric constraint (coincident, parallel, tangent, etc.) |
+| `auto_constrain` | Auto-constrain a sketch (Fusion 2026+ AutoConstrain API) |
 | `add_dimension` | Driving dimension (distance, angle, radial, diameter) |
 | `offset_curve` | Offset connected sketch curves |
 | `trim_curve` | Trim at intersections |
@@ -121,6 +122,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | `get_physical_properties` | Mass, volume, area, center of mass |
 | `create_section_analysis` | Section plane through model |
 | `check_interference` | Detect collisions between components |
+| `compare_meshes` | Deviation stats between two mesh bodies (Fusion 2026+) |
 
 ### Appearance & Parameters
 | Tool | Description |

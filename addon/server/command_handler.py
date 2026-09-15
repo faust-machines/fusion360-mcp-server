@@ -104,6 +104,8 @@ class CommandHandler:
             # parametric & agent-authored changes
             "set_parameter",
             "execute_code",
+            # sketch constraint mutation
+            "auto_constrain",
         }
     )
 
@@ -125,6 +127,7 @@ class CommandHandler:
                 "draw_spline": self.draw_spline,
                 "create_polygon": self.create_polygon,
                 "add_constraint": self.add_constraint,
+                "auto_constrain": self.auto_constrain,
                 "add_dimension": self.add_dimension,
                 "offset_curve": self.offset_curve,
                 "trim_curve": self.trim_curve,
@@ -182,6 +185,7 @@ class CommandHandler:
                 "get_physical_properties": self.get_physical_properties,
                 "create_section_analysis": self.create_section_analysis,
                 "check_interference": self.check_interference,
+                "compare_meshes": self.compare_meshes,
                 # appearance
                 "set_appearance": self.set_appearance,
                 # parameters
@@ -746,6 +750,53 @@ class CommandHandler:
 
         constraint_map[constraint_type]()
         return {"sketch": sketch.name, "constraint_type": constraint_type}
+
+    def auto_constrain(
+        self,
+        sketch_name: str = None,
+        result_option: int = 1,
+    ):
+        """Auto-constrain a sketch using Fusion's AutoConstrain (Jan 2026+).
+
+        result_option: 1 = thorough (default), 2 = fast,
+        3 = may move geometry within tolerance.
+        """
+        sketch = (
+            self._sketch_by_name(sketch_name) if sketch_name else self._last_sketch()
+        )
+
+        option_map = {
+            1: adsk.fusion.AutoConstrainResultTypes.Option1AutoConstrainResultType,
+            2: adsk.fusion.AutoConstrainResultTypes.Option2AutoConstrainResultType,
+            3: adsk.fusion.AutoConstrainResultTypes.Option3AutoConstrainResultType,
+        }
+        option = option_map.get(result_option)
+        if option is None:
+            raise RuntimeError(
+                f"Invalid result_option {result_option} — use 1 (thorough), "
+                "2 (fast), or 3 (may adjust geometry within tolerance)."
+            )
+
+        ac_input = sketch.createAutoConstrainInput()
+        ac_input.resultOption = option
+        result = sketch.autoConstrain(ac_input)
+        if result is None:
+            # Option 3 returns null when the sketch is not eligible for
+            # geometry adjustment.
+            raise RuntimeError(
+                "autoConstrain returned no result — the sketch is not "
+                "eligible for geometry adjustment. Retry with "
+                "result_option 1 or 2."
+            )
+
+        return {
+            "sketch": sketch.name,
+            "is_fully_constrained": result.isFullyConstrained,
+            "constraints_added": len(result.addedConstraints),
+            "dimensions_added": len(result.addedDimensions),
+            "entities_moved": len(result.movedGeometry),
+            "result_option": result_option,
+        }
 
     def add_dimension(
         self,
@@ -2540,6 +2591,54 @@ class CommandHandler:
                 )
 
         return {"interferences": results, "count": len(results)}
+
+    def compare_meshes(self, mesh_name_a: str, mesh_name_b: str):
+        """Compare two mesh bodies; report per-node deviation statistics.
+
+        Uses PolygonMesh.compareWith (Fusion 2026): for every node in mesh A,
+        the signed distance to the closest point on mesh B (cm).  Positive
+        means the node lies on the surface-normal side of B.
+        """
+        design = self._design()
+        root = design.rootComponent
+
+        def _mesh_body_by_name(name):
+            for i in range(root.meshBodies.count):
+                mb = root.meshBodies.item(i)
+                if mb.name == name:
+                    return mb
+            raise RuntimeError(
+                f"Mesh body '{name}' not found in root component. "
+                "Use get_scene_info to list mesh bodies."
+            )
+
+        body_a = _mesh_body_by_name(mesh_name_a)
+        body_b = _mesh_body_by_name(mesh_name_b)
+
+        mesh_a = body_a.mesh or body_a.displayMesh
+        mesh_b = body_b.mesh or body_b.displayMesh
+        if mesh_a is None or mesh_b is None:
+            raise RuntimeError("Could not obtain polygon mesh data")
+
+        deviations = list(mesh_a.compareWith(mesh_b))
+        if not deviations:
+            raise RuntimeError("compareWith returned no deviation data")
+
+        abs_dev = [abs(d) for d in deviations]
+        n = len(deviations)
+        mean_abs = sum(abs_dev) / n
+        rms = math.sqrt(sum(d * d for d in deviations) / n)
+        return {
+            "mesh_a": mesh_name_a,
+            "mesh_b": mesh_name_b,
+            "node_count": n,
+            "min_deviation": min(deviations),
+            "max_deviation": max(deviations),
+            "mean_abs_deviation": mean_abs,
+            "rms_deviation": rms,
+            "max_abs_deviation": max(abs_dev),
+            "units": "cm",
+        }
 
     # ------------------------------------------------------------------
     # Appearance

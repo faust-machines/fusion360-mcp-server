@@ -56,6 +56,7 @@ _MUTATION_MOCKS: frozenset[str] = frozenset(
         "undo",
         "set_parameter",
         "execute_code",
+        "auto_constrain",
     }
 )
 
@@ -495,6 +496,17 @@ def _add_constraint(p: dict) -> dict:
     }
 
 
+def _auto_constrain(p: dict) -> dict:
+    return {
+        "sketch": p.get("sketch_name", "Sketch1"),
+        "is_fully_constrained": True,
+        "constraints_added": 4,
+        "dimensions_added": 2,
+        "entities_moved": 0,
+        "result_option": p.get("result_option", 1),
+    }
+
+
 def _add_dimension(p: dict) -> dict:
     return {
         "dimension_type": p.get("dimension_type", "distance"),
@@ -706,6 +718,20 @@ def _check_interference(p: dict) -> dict:
         "component_names": p.get("component_names", []),
         "interference_count": 0,
         "interferences": [],
+    }
+
+
+def _compare_meshes(p: dict) -> dict:
+    return {
+        "mesh_a": p.get("mesh_name_a", "Mesh1"),
+        "mesh_b": p.get("mesh_name_b", "Mesh2"),
+        "node_count": 1200,
+        "min_deviation": -0.004,
+        "max_deviation": 0.006,
+        "mean_abs_deviation": 0.001,
+        "rms_deviation": 0.0015,
+        "max_abs_deviation": 0.006,
+        "units": "cm",
     }
 
 
@@ -984,6 +1010,7 @@ _DISPATCH: dict[str, Any] = {
     "delete_parameter": _delete_parameter,
     # sketch constraints & dimensions
     "add_constraint": _add_constraint,
+    "auto_constrain": _auto_constrain,
     "add_dimension": _add_dimension,
     # construction geometry
     "create_construction_plane": _create_construction_plane,
@@ -1015,6 +1042,7 @@ _DISPATCH: dict[str, Any] = {
     "get_physical_properties": _get_physical_properties,
     "create_section_analysis": _create_section_analysis,
     "check_interference": _check_interference,
+    "compare_meshes": _compare_meshes,
     # appearance
     "set_appearance": _set_appearance,
     # project geometry

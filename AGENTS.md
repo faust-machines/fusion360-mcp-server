@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is an MCP server (91 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
+This is an MCP server (93 tools) that connects AI coding agents to Autodesk Fusion 360 for CAD automation. It consists of two pieces:
 
 1. **MCP Server** (this repo) — speaks MCP protocol over stdio, forwards commands to Fusion via TCP
 2. **Fusion 360 Add-in** — runs inside Fusion, executes commands on the main thread via CustomEvent bridge
@@ -16,7 +16,7 @@ Claude Code ──stdio──> MCP Server ──TCP :9876──> Fusion Add-in �
 
 The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion API calls to the main thread. Socket threads submit work items and block on a per-item `threading.Event` until the main thread completes execution.
 
-## Available tools (91)
+## Available tools (93)
 
 ### Scene & Query
 | Tool | Description |
@@ -105,6 +105,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 |------|-------------|
 | `create_construction_plane` | Offset, angle, midplane, 3-point, tangent |
 | `create_construction_axis` | Two-point, intersection, edge, perpendicular |
+| `create_ucs` | User Coordinate System at a point with optional rotation (2026+, preview) |
 
 ### Assembly
 | Tool | Description |
@@ -128,6 +129,7 @@ The add-in uses a CustomEvent + work queue pattern to safely dispatch all Fusion
 | Tool | Description |
 |------|-------------|
 | `set_appearance` | Assign material appearance from library |
+| `set_color` | Assign a flat RGB color to a body |
 | `get_parameters` | List all user parameters |
 | `create_parameter` | Create a new parameter |
 | `set_parameter` | Update a parameter value |

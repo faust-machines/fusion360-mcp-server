@@ -118,6 +118,7 @@ def test_expected_tools_present():
         # construction geometry
         "create_construction_plane",
         "create_construction_axis",
+        "create_ucs",
         # splines
         "draw_spline",
         # sketch curve operations
@@ -149,6 +150,7 @@ def test_expected_tools_present():
         "compare_meshes",
         # appearance
         "set_appearance",
+        "set_color",
         # project geometry
         "project_geometry",
         # timeline control

@@ -106,6 +106,9 @@ class CommandHandler:
             "execute_code",
             # sketch constraint mutation
             "auto_constrain",
+            # construction geometry / appearance
+            "create_ucs",
+            "set_color",
         }
     )
 
@@ -174,6 +177,7 @@ class CommandHandler:
                 # construction geometry
                 "create_construction_plane": self.create_construction_plane,
                 "create_construction_axis": self.create_construction_axis,
+                "create_ucs": self.create_ucs,
                 # assembly
                 "create_component": self.create_component,
                 "add_joint": self.add_joint,
@@ -188,6 +192,7 @@ class CommandHandler:
                 "compare_meshes": self.compare_meshes,
                 # appearance
                 "set_appearance": self.set_appearance,
+                "set_color": self.set_color,
                 # parameters
                 "get_parameters": self.get_parameters,
                 "create_parameter": self.create_parameter,
@@ -2399,6 +2404,64 @@ class CommandHandler:
         axis_obj = axes.add(inp)
         return {"created": True, "name": axis_obj.name, "method": method}
 
+    def create_ucs(
+        self,
+        name: str = None,
+        x: float = 0,
+        y: float = 0,
+        z: float = 0,
+        angle_x: float = 0,
+        angle_y: float = 0,
+        angle_z: float = 0,
+    ):
+        """Create a User Coordinate System at (x, y, z), angles in degrees.
+
+        The UCS API (May 2026, preview) is entity-based: the anchor must be
+        a sketch point / vertex / construction point.  This creates a hidden
+        reference sketch (``UCS_<name>_ref``) holding the anchor point; the
+        UCS stays parametrically linked to it, so don't delete that sketch.
+        (ConstructionPoint anchors are rejected by current builds, hence the
+        sketch-point route.)
+        """
+        root = self._root()
+
+        if z:
+            plane_in = root.constructionPlanes.createInput()
+            plane_in.setByOffset(
+                root.xYConstructionPlane, adsk.core.ValueInput.createByReal(z)
+            )
+            base_plane = root.constructionPlanes.add(plane_in)
+        else:
+            base_plane = root.xYConstructionPlane
+
+        sk = root.sketches.add(base_plane)
+        pt = sk.sketchPoints.add(adsk.core.Point3D.create(x, y, 0))
+        ref_name = f"UCS_{name or 'unnamed'}_ref"
+        sk.name = ref_name
+        sk.isVisible = False
+
+        geom = adsk.fusion.UserCoordinateSystemGeometry_createByPoint(pt)
+        inp = root.userCoordinateSystems.createInput(geom)
+        if angle_x:
+            inp.angleX = adsk.core.ValueInput.createByReal(math.radians(angle_x))
+        if angle_y:
+            inp.angleY = adsk.core.ValueInput.createByReal(math.radians(angle_y))
+        if angle_z:
+            inp.angleZ = adsk.core.ValueInput.createByReal(math.radians(angle_z))
+
+        ucs = root.userCoordinateSystems.add(inp)
+        if name:
+            try:
+                ucs.name = name
+            except Exception:
+                pass
+        return {
+            "name": ucs.name,
+            "origin": [x, y, z],
+            "angles_deg": [angle_x, angle_y, angle_z],
+            "reference_sketch": ref_name,
+        }
+
     # ------------------------------------------------------------------
     # Assembly
     # ------------------------------------------------------------------
@@ -2728,6 +2791,42 @@ class CommandHandler:
 
         return {"applied": True, "target": target_name, "appearance": appearance_name}
 
+    def set_color(
+        self,
+        body_name: str,
+        red: int,
+        green: int,
+        blue: int,
+        opacity: float = 1.0,
+    ):
+        """Assign a flat RGB color to a body via a design-local appearance.
+
+        Uses the Appearances.add + Appearance.color API (July 2026), so no
+        library copy is needed.  Appearances are reused when the same color
+        is requested again.  opacity 1.0 = fully opaque, 0.0 = invisible.
+        """
+        body = self._body_by_name(body_name)
+        design = self._design()
+
+        red = max(0, min(255, int(red)))
+        green = max(0, min(255, int(green)))
+        blue = max(0, min(255, int(blue)))
+        alpha = max(0, min(255, round(opacity * 255)))
+
+        color_name = f"MCP_{red}_{green}_{blue}_{alpha}"
+        appearance = design.appearances.itemByName(color_name)
+        if appearance is None:
+            appearance = design.appearances.add(color_name)
+            appearance.color = adsk.core.Color.create(red, green, blue, alpha)
+
+        body.appearance = appearance
+        return {
+            "body": body_name,
+            "color": [red, green, blue],
+            "opacity": alpha / 255.0,
+            "appearance": color_name,
+        }
+
     # ------------------------------------------------------------------
     # Parameters
     # ------------------------------------------------------------------
@@ -3004,8 +3103,7 @@ class CommandHandler:
                     ws.activate()
                     adsk.doEvents()
                 except Exception as exc:
-                    log.warning("Manufacture workspace activation failed: %s",
-                                exc)
+                    log.warning("Manufacture workspace activation failed: %s", exc)
                 cam_product = _find_cam_product()
 
         if cam_product is None:
@@ -3135,8 +3233,7 @@ class CommandHandler:
         failed_stock = {}
         if stock_mode:
             mode_id = stock_mode_map.get(stock_mode, stock_mode)
-            if self._set_cam_parameter(setup, "job_stockMode", mode_id,
-                                       by_string=True):
+            if self._set_cam_parameter(setup, "job_stockMode", mode_id, by_string=True):
                 applied_stock["stock_mode"] = mode_id
             else:
                 failed_stock["stock_mode"] = stock_mode

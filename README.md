@@ -287,7 +287,7 @@ Call the `ping` tool from your client. If it returns `{"pong": true}`, everythin
 
 ```bash
 uv sync --dev       # install deps
-uv run pytest -v    # run tests (171 tests)
+uv run pytest -v    # run tests (359 tests)
 uv run ruff check   # lint
 ```
 

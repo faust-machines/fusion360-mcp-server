@@ -2075,7 +2075,9 @@ TOOLS: list[dict] = [
                     "type": "number",
                     "minimum": 0.001,
                     "description": (
-                        "Tool diameter (cm) — used if tool_number not specified"
+                        "Not supported — tool geometry comes from the CAM "
+                        "tool library; select via tool_number instead. "
+                        "Passing this raises an error."
                     ),
                 },
                 "stepdown": {
@@ -2154,9 +2156,10 @@ TOOLS: list[dict] = [
                     "type": "string",
                     "default": "fanuc",
                     "description": (
-                        "Post processor name "
-                        "(e.g. 'fanuc', 'grbl', 'haas', "
-                        "'linuxcnc', 'mach3')"
+                        "Post processor short name ('fanuc', 'grbl', 'haas') "
+                        "resolved against the local post folder when the "
+                        "Fusion build provides one, or a full path to a "
+                        ".cps file (required on cloud-post builds)"
                     ),
                 },
                 "output_folder": {

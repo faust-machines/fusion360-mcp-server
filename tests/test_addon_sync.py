@@ -86,3 +86,52 @@ def test_mutation_sets_in_sync():
         f"  only in addon: {sorted(addon_set - mock_set)}\n"
         f"  only in mock:  {sorted(mock_set - addon_set)}"
     )
+
+
+def _extract_command_dispatch_keys(path: Path) -> set[str]:
+    """Pull the string keys of the ``_COMMANDS`` dict literal out of the
+    add-in's command_handler via AST (the module can't be imported without
+    Fusion's ``adsk`` runtime)."""
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(t, ast.Attribute) and t.attr == "_COMMANDS" for t in node.targets
+        ):
+            continue
+        if isinstance(node.value, ast.Dict):
+            keys = {
+                k.value
+                for k in node.value.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+            if keys:
+                return keys
+    raise AssertionError(f"_COMMANDS dict literal not found in {path}")
+
+
+# Commands the add-in dispatches that are intentionally not MCP tools.
+_DISPATCH_ONLY = {"reload_handler"}
+
+
+def test_tools_match_addon_dispatch():
+    """Every MCP tool must have an add-in handler, and vice versa.
+
+    This is the drift guard that catches "added a tool to tools.py but
+    forgot the CommandHandler entry" (and the reverse) at CI time.
+    """
+    from fusion360_mcp.tools import TOOLS
+
+    tool_names = {t["name"] for t in TOOLS}
+    dispatch = (
+        _extract_command_dispatch_keys(
+            REPO_ROOT / "addon" / "server" / "command_handler.py"
+        )
+        - _DISPATCH_ONLY
+    )
+    assert tool_names == dispatch, (
+        f"tools.py and CommandHandler._COMMANDS have drifted.\n"
+        f"  tools without handler: {sorted(tool_names - dispatch)}\n"
+        f"  handlers without tool: {sorted(dispatch - tool_names)}"
+    )

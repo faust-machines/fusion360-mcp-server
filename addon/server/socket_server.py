@@ -19,8 +19,8 @@ from . import get_logger
 
 log = get_logger("socket")
 
-_RESTART_DELAY = 2.0   # seconds before rebinding after socket error
-_MAX_RESTARTS = 10      # consecutive restart cap before giving up
+_RESTART_DELAY = 2.0  # seconds before rebinding after socket error
+_MAX_RESTARTS = 10  # consecutive restart cap before giving up
 
 
 class Fusion360MCPServer:
@@ -33,6 +33,8 @@ class Fusion360MCPServer:
         self._running = False
         self._socket = None
         self._accept_thread = None
+        self._clients: set[socket.socket] = set()
+        self._clients_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -44,13 +46,27 @@ class Fusion360MCPServer:
 
         self._running = True
         self._accept_thread = threading.Thread(
-            target=self._accept_loop_with_restart, daemon=True)
+            target=self._accept_loop_with_restart, daemon=True
+        )
         self._accept_thread.start()
         return True
 
     def stop(self):
         self._running = False
         self._close_socket()
+        # Close accepted client sockets so per-client threads exit
+        # instead of blocking on recv() against a stopped server.
+        with self._clients_lock:
+            clients = list(self._clients)
+        for c in clients:
+            try:
+                c.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                c.close()
+            except Exception:
+                pass
         if self._accept_thread and self._accept_thread.is_alive():
             self._accept_thread.join(timeout=2.0)
         self._accept_thread = None
@@ -100,11 +116,14 @@ class Fusion360MCPServer:
             if not self._bind_socket():
                 restarts += 1
                 if restarts > _MAX_RESTARTS:
-                    log.error("Exceeded %d restart attempts — giving up",
-                              _MAX_RESTARTS)
+                    log.error("Exceeded %d restart attempts — giving up", _MAX_RESTARTS)
                     break
-                log.warning("Retrying bind in %.1fs (attempt %d/%d)",
-                            _RESTART_DELAY, restarts, _MAX_RESTARTS)
+                log.warning(
+                    "Retrying bind in %.1fs (attempt %d/%d)",
+                    _RESTART_DELAY,
+                    restarts,
+                    _MAX_RESTARTS,
+                )
                 time.sleep(_RESTART_DELAY)
                 continue
 
@@ -115,13 +134,11 @@ class Fusion360MCPServer:
                 self._accept_loop()
             except Exception:
                 if self._running:
-                    log.error("Accept loop crashed:\n%s",
-                              traceback.format_exc())
+                    log.error("Accept loop crashed:\n%s", traceback.format_exc())
 
             # If we get here and still running, the socket died — restart
             if self._running:
-                log.warning("Socket lost — restarting in %.1fs",
-                            _RESTART_DELAY)
+                log.warning("Socket lost — restarting in %.1fs", _RESTART_DELAY)
                 self._close_socket()
                 time.sleep(_RESTART_DELAY)
 
@@ -131,14 +148,17 @@ class Fusion360MCPServer:
             try:
                 client, addr = self._socket.accept()
                 log.info("Client connected: %s", addr)
+                with self._clients_lock:
+                    self._clients.add(client)
                 t = threading.Thread(
-                    target=self._handle_client, args=(client,), daemon=True)
+                    target=self._handle_client, args=(client,), daemon=True
+                )
                 t.start()
             except socket.timeout:
                 continue
             except OSError:
                 if self._running:
-                    raise          # bubble up so outer loop can restart
+                    raise  # bubble up so outer loop can restart
                 break
 
     # ------------------------------------------------------------------
@@ -165,8 +185,9 @@ class Fusion360MCPServer:
                     try:
                         command = json.loads(line)
                     except json.JSONDecodeError:
-                        self._send(client, {
-                            "status": "error", "message": "Invalid JSON"})
+                        self._send(
+                            client, {"status": "error", "message": "Invalid JSON"}
+                        )
                         continue
                     self._dispatch(client, command)
 
@@ -184,6 +205,8 @@ class Fusion360MCPServer:
             if self._running:
                 log.debug("Client handler error:\n%s", traceback.format_exc())
         finally:
+            with self._clients_lock:
+                self._clients.discard(client)
             try:
                 client.close()
             except Exception:
@@ -196,19 +219,6 @@ class Fusion360MCPServer:
 
     def _dispatch(self, client, command):
         """Submit command to bridge and send response back to client."""
-        cmd_type = command.get("type", "")
-
-        # Reload is handled server-side, not through the bridge
-        if cmd_type == "reload_handler":
-            try:
-                self._bridge.reload_handler()
-                response = {"status": "success",
-                            "result": {"reloaded": True}}
-            except Exception as exc:
-                response = {"status": "error", "message": str(exc)}
-            self._send(client, response)
-            return
-
         try:
             response = self._bridge.submit(command)
         except Exception as exc:
@@ -220,5 +230,5 @@ class Fusion360MCPServer:
         try:
             payload = json.dumps(data) + "\n"
             client.sendall(payload.encode("utf-8"))
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Failed to send response to client: %s", exc)

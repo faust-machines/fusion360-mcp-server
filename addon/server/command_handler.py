@@ -226,7 +226,11 @@ class CommandHandler:
         if handler is None:
             # Infrastructure-level failure (not an application error) —
             # keep the legacy error envelope so the client raises.
-            return {"status": "error", "message": f"Unknown command: {cmd_type}"}
+            return {
+                "status": "error",
+                "error_kind": "UNKNOWN_COMMAND",
+                "message": f"Unknown command: {cmd_type}",
+            }
 
         is_mutation = cmd_type in self._MUTATION_COMMANDS
         snap_before = self._snapshot() if is_mutation else None
@@ -1855,8 +1859,34 @@ class CommandHandler:
         """
         design = self._design()
         root = design.rootComponent
-        deleted = {"timeline": 0, "bodies": 0, "sketches": 0}
+        deleted = {
+            "timeline": 0,
+            "joints": 0,
+            "occurrences": 0,
+            "construction": 0,
+            "bodies": 0,
+            "sketches": 0,
+        }
         errors = []
+
+        def _sweep(collection, stage, counter):
+            """Delete every item of *collection*, newest-first."""
+            for i in range(collection.count - 1, -1, -1):
+                name = "?"
+                try:
+                    item = collection.item(i)
+                    name = getattr(item, "name", "?")
+                    item.deleteMe()
+                    deleted[counter] += 1
+                except Exception as exc:
+                    errors.append(
+                        {
+                            "stage": stage,
+                            "index": i,
+                            "name": name,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
 
         # Parametric: unwind newest-first.  NOTE: TimelineObject has no
         # deleteMe() — that method lives on the *entity* it wraps.  Calling it
@@ -1871,20 +1901,39 @@ class CommandHandler:
                     entity = item.entity
                     if entity is None:
                         errors.append(
-                            {"stage": "timeline", "index": i, "name": name,
-                             "error": "timeline item exposes no entity"}
+                            {
+                                "stage": "timeline",
+                                "index": i,
+                                "name": name,
+                                "error": "timeline item exposes no entity",
+                            }
                         )
                         continue
                     entity.deleteMe()
                     deleted["timeline"] += 1
                 except Exception as exc:
                     errors.append(
-                        {"stage": "timeline", "index": i, "name": name,
-                         "error": f"{type(exc).__name__}: {exc}"}
+                        {
+                            "stage": "timeline",
+                            "index": i,
+                            "name": name,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
                     )
 
-        # Direct mode has no timeline; also catches anything the pass above
-        # could not remove.
+        # Direct mode has no timeline; the sweeps below also catch anything
+        # the timeline pass could not remove.  Joints go before occurrences
+        # because they reference them.
+        _sweep(root.rigidGroups, "rigid_group", "joints")
+        _sweep(root.asBuiltJoints, "as_built_joint", "joints")
+        _sweep(root.joints, "joint", "joints")
+        # Deleting an occurrence removes the component it references,
+        # including its bodies and sketches.
+        _sweep(root.occurrences, "occurrence", "occurrences")
+        _sweep(root.constructionPlanes, "construction_plane", "construction")
+        _sweep(root.constructionAxes, "construction_axis", "construction")
+        _sweep(root.constructionPoints, "construction_point", "construction")
+
         for i in range(root.bRepBodies.count - 1, -1, -1):
             name = "?"
             try:
@@ -1894,8 +1943,12 @@ class CommandHandler:
                 deleted["bodies"] += 1
             except Exception as exc:
                 errors.append(
-                    {"stage": "body", "index": i, "name": name,
-                     "error": f"{type(exc).__name__}: {exc}"}
+                    {
+                        "stage": "body",
+                        "index": i,
+                        "name": name,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
                 )
 
         for i in range(root.sketches.count - 1, -1, -1):
@@ -1907,17 +1960,30 @@ class CommandHandler:
                 deleted["sketches"] += 1
             except Exception as exc:
                 errors.append(
-                    {"stage": "sketch", "index": i, "name": name,
-                     "error": f"{type(exc).__name__}: {exc}"}
+                    {
+                        "stage": "sketch",
+                        "index": i,
+                        "name": name,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
                 )
 
         remaining = {
             "bodies": root.bRepBodies.count,
             "sketches": root.sketches.count,
+            "occurrences": root.occurrences.count,
+            "joints": (
+                root.joints.count + root.asBuiltJoints.count + root.rigidGroups.count
+            ),
+            "construction": (
+                root.constructionPlanes.count
+                + root.constructionAxes.count
+                + root.constructionPoints.count
+            ),
             "timeline": tl.count if tl is not None else 0,
         }
 
-        if remaining["bodies"] or remaining["sketches"]:
+        if any(v for k, v in remaining.items() if k != "timeline"):
             raise RuntimeError(
                 f"delete_all did not clear the design — remaining: {remaining}. "
                 f"Deleted: {deleted}. Failures: {errors}"
@@ -1930,8 +1996,13 @@ class CommandHandler:
         type_before = design.designType
 
         cmd_def = self.ui.commandDefinitions.itemById("UndoCommand")
-        if cmd_def:
-            cmd_def.execute()
+        if cmd_def is None:
+            raise RuntimeError(
+                "Undo command is not available in the current workspace. "
+                "The design was NOT modified — delete the failed feature "
+                "explicitly instead."
+            )
+        cmd_def.execute()
 
         # Check if undo silently switched design type (Parametric → Direct)
         adsk.doEvents()  # let Fusion process the undo
@@ -1942,10 +2013,11 @@ class CommandHandler:
             if redo_def:
                 redo_def.execute()
                 adsk.doEvents()
+            parametric = adsk.fusion.DesignTypes.ParametricDesignType
             raise RuntimeError(
                 f"Undo aborted: would have changed design type from "
-                f"{'Parametric' if type_before == 1 else 'Direct'} to "
-                f"{'Parametric' if type_after == 1 else 'Direct'}. "
+                f"{'Parametric' if type_before == parametric else 'Direct'} to "
+                f"{'Parametric' if type_after == parametric else 'Direct'}. "
                 f"The undo was automatically reversed (redo). "
                 f"Delete the failed feature explicitly instead."
             )
@@ -2506,16 +2578,28 @@ class CommandHandler:
         if not appearance:
             raise RuntimeError(f"Appearance '{appearance_name}' not found")
 
+        # Library appearances must be copied into the design before
+        # assignment — assigning a library appearance directly is
+        # version-dependent and known to fail on recent Fusion builds.
+        design = self._design()
+        local = design.appearances.itemByName(appearance.name)
+        if local is None:
+            local = design.appearances.addByCopy(appearance, appearance.name)
+        if local is None:
+            raise RuntimeError(
+                f"Could not copy appearance '{appearance_name}' into the design"
+            )
+
         if target_type == "body":
             body = self._body_by_name(target_name)
-            body.appearance = appearance
+            body.appearance = local
         elif target_type == "component":
             comp = self._component_by_name(target_name)
-            comp.appearance = appearance
+            comp.appearance = local
         elif target_type == "face":
             body = self._body_by_name(target_name)
             face = body.faces.item(face_index)
-            face.appearance = appearance
+            face.appearance = local
 
         return {"applied": True, "target": target_name, "appearance": appearance_name}
 
@@ -2887,7 +2971,60 @@ class CommandHandler:
             setup_input.name = name
 
         setup = cam.setups.add(setup_input)
-        return {"name": setup.name, "body": body_name, "operation_type": operation_type}
+
+        # Stock parameters live on the created setup, not the input.
+        applied_stock = {}
+        failed_stock = {}
+        if stock_mode:
+            if self._set_cam_parameter(setup, "stockMode", stock_mode, by_string=True):
+                applied_stock["stockMode"] = stock_mode
+            else:
+                failed_stock["stockMode"] = stock_mode
+        for param_name, value in (
+            ("stockOffsetSides", stock_offset_sides),
+            ("stockOffsetTop", stock_offset_top),
+            ("stockOffsetBottom", stock_offset_bottom),
+        ):
+            if value:
+                if self._set_cam_parameter(setup, param_name, value):
+                    applied_stock[param_name] = value
+                else:
+                    failed_stock[param_name] = value
+
+        result = {
+            "name": setup.name,
+            "body": body_name,
+            "operation_type": operation_type,
+        }
+        if applied_stock:
+            result["stock_applied"] = applied_stock
+        if failed_stock:
+            result["stock_failed"] = failed_stock
+            result["warning"] = (
+                "Some stock parameters could not be applied — parameter "
+                "names vary by Fusion build; inspect via cam_get_operation_info"
+            )
+        return result
+
+    @staticmethod
+    def _set_cam_parameter(target, param_name, value, by_string=False):
+        """Set a CAM parameter on a setup or operation. Returns success."""
+        try:
+            params = getattr(target, "parameters", None)
+            if params is None:
+                return False
+            p = params.itemByName(param_name)
+            if p is None:
+                return False
+            p.value = (
+                adsk.core.ValueInput.createByString(str(value))
+                if by_string
+                else adsk.core.ValueInput.createByReal(value)
+            )
+            return True
+        except Exception as exc:
+            log.debug("CAM parameter %s=%r failed: %s", param_name, value, exc)
+            return False
 
     def cam_create_operation(
         self,
@@ -2905,18 +3042,71 @@ class CommandHandler:
         cam = self._get_cam()
         setup = self._find_setup(cam, setup_name)
 
+        if tool_diameter is not None:
+            raise RuntimeError(
+                "tool_diameter cannot be set on an operation — tool geometry "
+                "comes from a tool in the CAM tool library. Select the tool "
+                "via tool_number instead."
+            )
+
         op_input = setup.operations.createInput(strategy)
         if name:
             op_input.name = name
-        if tool_diameter:
-            op_input.toolDiameter = adsk.core.ValueInput.createByReal(tool_diameter)
-        if stepdown:
-            op_input.maximumStepdown = adsk.core.ValueInput.createByReal(stepdown)
-        if stepover:
-            op_input.maximumStepover = adsk.core.ValueInput.createByReal(stepover)
 
         op = setup.operations.add(op_input)
-        return {"name": op.name, "setup": setup_name, "strategy": strategy}
+        if op is None:
+            raise RuntimeError(
+                f"Fusion rejected strategy '{strategy}' for setup '{setup_name}'"
+            )
+
+        # Operation parameters (stepdown, feeds, speeds...) only exist on
+        # the created operation, keyed by strategy-dependent names.
+        applied = {}
+        failed = {}
+        for param_name, value, by_string in (
+            ("tool_number", tool_number, False),
+            ("maximumStepdown", stepdown, False),
+            ("maximumStepover", stepover, False),
+            ("tool_feedCutting", feed_rate, False),
+            ("tool_spindleSpeed", spindle_speed, False),
+            ("tool_coolant", coolant, True),
+        ):
+            if value is None:
+                continue
+            if self._set_cam_parameter(op, param_name, value, by_string):
+                applied[param_name] = value
+            else:
+                failed[param_name] = value
+
+        result = {"name": op.name, "setup": setup_name, "strategy": strategy}
+        if applied:
+            result["parameters_applied"] = applied
+        if failed:
+            result["parameters_failed"] = failed
+            result["warning"] = (
+                "Some parameters are not available for this strategy — "
+                "check available names via cam_get_operation_info"
+            )
+        return result
+
+    @staticmethod
+    def _wait_future(future, timeout: float = 25.0):
+        """Wait for a CAM generation future, bounded so a runaway
+        generation fails as a structured error instead of freezing the
+        main thread past the bridge timeout."""
+        is_completed = getattr(future, "isCompleted", None)
+        if is_completed is None:
+            future.wait()
+            return
+        deadline = time.monotonic() + timeout
+        while not future.isCompleted:
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"Toolpath generation did not finish within {timeout}s. "
+                    "The operation may still complete in the background — "
+                    "check with cam_list_operations before regenerating."
+                )
+            time.sleep(0.1)
 
     def cam_generate_toolpath(
         self,
@@ -2928,14 +3118,14 @@ class CommandHandler:
 
         if generate_all:
             future = cam.generateAllToolpaths(False)
-            future.wait()
+            self._wait_future(future)
             return {"generated": True, "scope": "all"}
 
         if operation_name and setup_name:
             setup = self._find_setup(cam, setup_name)
             op = self._find_operation(setup, operation_name)
             future = cam.generateToolpath(op)
-            future.wait()
+            self._wait_future(future)
             return {
                 "generated": True,
                 "scope": "operation",
@@ -2948,7 +3138,7 @@ class CommandHandler:
             for i in range(setup.operations.count):
                 ops.add(setup.operations.item(i))
             future = cam.generateToolpath(ops)
-            future.wait()
+            self._wait_future(future)
             return {"generated": True, "scope": "setup", "setup": setup_name}
 
         raise RuntimeError("Provide setup_name, operation_name, or generate_all=true")
@@ -2967,7 +3157,23 @@ class CommandHandler:
         if not output_folder:
             output_folder = os.path.join(os.path.expanduser("~"), "Desktop")
 
-        post_config = os.path.join(cam.genericPostFolder, f"{post_processor}.cps")
+        # Accept a full path to a .cps file, or resolve a short name against
+        # the legacy local post folder when the build still provides one.
+        if post_processor.endswith(".cps") or os.path.sep in post_processor:
+            post_config = post_processor
+        else:
+            post_folder = getattr(cam, "genericPostFolder", None)
+            if not post_folder:
+                raise RuntimeError(
+                    "This Fusion build has no local generic post folder "
+                    "(posts are cloud-library based). Pass the full path to "
+                    "the .cps file in 'post_processor' instead of a short "
+                    "name."
+                )
+            post_config = os.path.join(post_folder, f"{post_processor}.cps")
+
+        if not os.path.isfile(post_config):
+            raise RuntimeError(f"Post processor not found: {post_config}")
 
         units = (
             adsk.cam.PostOutputUnitOptions.MillimetersOutput
@@ -3104,10 +3310,11 @@ class CommandHandler:
         type_after = design.designType
         design_type_warning = None
         if type_before != type_after:
+            parametric = adsk.fusion.DesignTypes.ParametricDesignType
             design_type_warning = (
                 f"WARNING: Design type changed from "
-                f"{'parametric' if type_before == 1 else 'direct'} to "
-                f"{'parametric' if type_after == 1 else 'direct'} "
+                f"{'parametric' if type_before == parametric else 'direct'} to "
+                f"{'parametric' if type_after == parametric else 'direct'} "
                 f"during code execution. Use set_design_type to recover."
             )
             log.warning(design_type_warning)
@@ -3182,8 +3389,16 @@ class CommandHandler:
             mass_g = 0.0
             if body_count > 0:
                 try:
-                    # physicalProperties.mass is in kg
-                    mass_g = float(root.physicalProperties.mass) * 1000.0
+                    # physicalProperties.mass is in kg.  Sum occurrence
+                    # bodies explicitly so mass_g stays consistent with
+                    # body_count (which includes occurrence bodies).
+                    mass_kg = float(root.physicalProperties.mass)
+                    for occ in root.allOccurrences:
+                        try:
+                            mass_kg += float(occ.physicalProperties.mass)
+                        except Exception:
+                            pass
+                    mass_g = mass_kg * 1000.0
                 except Exception:
                     mass_g = 0.0
 
@@ -3236,6 +3451,11 @@ class CommandHandler:
         if viewport is None:
             raise RuntimeError("No active viewport")
 
+        # Clamp dimensions — an oversized capture would stall the main
+        # thread and produce an enormous base64 payload.
+        width = max(16, min(int(width), 4096))
+        height = max(16, min(int(height), 4096))
+
         repositioned = view != "current"
         if repositioned:
             spec = self._VIEW_DIRS.get(view)
@@ -3283,11 +3503,15 @@ class CommandHandler:
                 cam.target = adsk.core.Point3D.create(*orig_state["target"])
                 cam.upVector = adsk.core.Vector3D.create(*orig_state["up"])
                 viewport.camera = cam
+                try:
+                    viewport.refresh()
+                except Exception:
+                    pass
 
         return {
             "view": view,
-            "width": int(width),
-            "height": int(height),
+            "width": width,
+            "height": height,
             "image_format": "png",
             "image_base64": base64.b64encode(data).decode("ascii"),
             "bytes": len(data),

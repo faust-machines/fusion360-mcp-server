@@ -15,7 +15,13 @@ import click
 import mcp.types as types
 from mcp.server.lowlevel import Server
 
-from .connection import get_connection, reset_connection
+from .connection import (
+    _DEFAULT_HOST,
+    _DEFAULT_PORT,
+    FusionError,
+    get_connection,
+    reset_connection,
+)
 from .mock import mock_command
 from .tools import get_tool_by_name, get_tool_list
 
@@ -30,14 +36,26 @@ def _send(
     command_type: str,
     params: dict | None = None,
     *,
-    host: str = "localhost",
-    port: int = 9876,
+    host: str = _DEFAULT_HOST,
+    port: int = _DEFAULT_PORT,
 ) -> dict:
     """Route a command through either the real TCP connection or mock."""
     if mode == "mock":
         return mock_command(command_type, params)
     conn = get_connection(host=host, port=port)
     return conn.send_command(command_type, params)
+
+
+def _fusion_error_result(name: str, exc: FusionError) -> types.CallToolResult:
+    """Render a structured add-in error as an isError tool result."""
+    lines = [f"**{name}** ERROR ({exc.error_kind})", f"  {exc}"]
+    if exc.hints:
+        lines.append("  hints:")
+        lines.extend(f"    - {h}" for h in exc.hints)
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text="\n".join(lines))],
+        isError=True,
+    )
 
 
 # Fields surfaced at the top of the formatted text block.  Everything else
@@ -181,6 +199,10 @@ def main(mode: str, host: str, port: int) -> int:
 
         try:
             result = _send(mode, name, arguments, host=host, port=port)
+        except FusionError as exc:
+            # Structured failure from the add-in (or a non-retried
+            # mutation timeout) — the connection itself is healthy.
+            return _fusion_error_result(name, exc)
         except Exception as exc:
             reset_connection()
             content = [
@@ -227,7 +249,7 @@ def main(mode: str, host: str, port: int) -> int:
     async def read_resource(uri: str) -> str:
         if uri == "fusion360://status":
             try:
-                result = _send(mode, "ping", port=port)
+                result = _send(mode, "ping", host=host, port=port)
                 return json.dumps(
                     {"connected": True, "ping": result},
                     indent=2,
@@ -241,7 +263,7 @@ def main(mode: str, host: str, port: int) -> int:
 
         if uri == "fusion360://design":
             try:
-                result = _send(mode, "get_scene_info", port=port)
+                result = _send(mode, "get_scene_info", host=host, port=port)
                 return json.dumps(result, indent=2)
             except Exception as exc:
                 reset_connection()
@@ -252,6 +274,7 @@ def main(mode: str, host: str, port: int) -> int:
                 result = _send(
                     mode,
                     "get_parameters",
+                    host=host,
                     port=port,
                 )
                 return json.dumps(result, indent=2)
@@ -268,6 +291,7 @@ def main(mode: str, host: str, port: int) -> int:
                     mode,
                     "get_object_info",
                     {"name": name},
+                    host=host,
                     port=port,
                 )
                 return json.dumps(result, indent=2)
@@ -286,6 +310,7 @@ def main(mode: str, host: str, port: int) -> int:
                     mode,
                     "get_object_info",
                     {"name": name},
+                    host=host,
                     port=port,
                 )
                 return json.dumps(result, indent=2)

@@ -128,12 +128,16 @@ _RULES: list[tuple[str, str, list[str]]] = [
 ]
 
 
-def classify(exc: BaseException) -> tuple[str, list[str]]:
+def classify(exc: BaseException | str) -> tuple[str, list[str]]:
     """Return ``(error_kind, hints)`` for *exc*.
 
-    Falls back to ``("UNKNOWN", [])`` if no rule matches.
+    Accepts either an exception or a message string.  Falls back to
+    ``("UNKNOWN", [])`` if no rule matches.
     """
-    msg = str(exc) or exc.__class__.__name__
+    if isinstance(exc, BaseException):
+        msg = str(exc) or exc.__class__.__name__
+    else:
+        msg = str(exc)
     for pattern, kind, hints in _RULES:
         if re.search(pattern, msg, re.IGNORECASE):
             return kind, list(hints)

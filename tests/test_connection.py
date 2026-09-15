@@ -8,6 +8,7 @@ import pytest
 
 from fusion360_mcp.connection import (
     Fusion360Connection,
+    FusionError,
     get_connection,
     reset_connection,
 )
@@ -35,8 +36,10 @@ def _start_echo_server(host="127.0.0.1", port=0):
                     cmd = json.loads(line)
                     resp = {
                         "status": "success",
-                        "result": {"echoed_type": cmd["type"],
-                                   "echoed_params": cmd.get("params", {})},
+                        "result": {
+                            "echoed_type": cmd["type"],
+                            "echoed_params": cmd.get("params", {}),
+                        },
                     }
                     conn.sendall((json.dumps(resp) + "\n").encode())
         except Exception:
@@ -76,8 +79,10 @@ def _start_multi_accept_server(host="127.0.0.1", port=0, max_accepts=3):
                         cmd = json.loads(line)
                         resp = {
                             "status": "success",
-                            "result": {"echoed_type": cmd["type"],
-                                       "echoed_params": cmd.get("params", {})},
+                            "result": {
+                                "echoed_type": cmd["type"],
+                                "echoed_params": cmd.get("params", {}),
+                            },
                         }
                         conn.sendall((json.dumps(resp) + "\n").encode())
             except Exception:
@@ -295,6 +300,7 @@ class TestGetConnectionSingleton:
     def test_reset_clears_singleton(self):
         """reset_connection should clear the cached connection."""
         import fusion360_mcp.connection as mod
+
         saved = mod._connection
         try:
             mod._connection = Fusion360Connection("127.0.0.1", 1)
@@ -306,6 +312,7 @@ class TestGetConnectionSingleton:
     def test_reset_when_no_connection(self):
         """reset_connection should not error when nothing cached."""
         import fusion360_mcp.connection as mod
+
         saved = mod._connection
         try:
             mod._connection = None
@@ -318,6 +325,7 @@ class TestGetConnectionSingleton:
         """Repeated calls return the same connection object."""
         port, srv, _ = _start_echo_server()
         import fusion360_mcp.connection as mod
+
         saved = mod._connection
         mod._connection = None
         try:
@@ -365,3 +373,166 @@ class TestMultipleCommands:
         result = conn.send_command("draw_spline", params)
         assert result["echoed_params"] == params
         conn.disconnect()
+
+
+class TestStructuredErrors:
+    """status:error envelopes must surface as structured FusionError."""
+
+    def _make_error_server(self, response: dict):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+
+        def handler():
+            c, _ = srv.accept()
+            c.recv(4096)
+            c.sendall((json.dumps(response) + "\n").encode())
+            c.close()
+            srv.close()
+
+        threading.Thread(target=handler, daemon=True).start()
+        return port
+
+    def test_error_message_is_classified(self):
+        """A bare message envelope gets error_kind from the hints table."""
+        port = self._make_error_server(
+            {"status": "error", "message": "Unknown command: frobnicate"}
+        )
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        with pytest.raises(FusionError) as exc_info:
+            conn.send_command("frobnicate")
+        assert exc_info.value.error_kind == "UNKNOWN_COMMAND"
+        assert exc_info.value.hints  # classified hints, not empty
+
+    def test_explicit_error_kind_and_hints_preserved(self):
+        """An envelope carrying error_kind/hints passes them through."""
+        port = self._make_error_server(
+            {
+                "status": "error",
+                "error_kind": "TIMEOUT",
+                "message": "Command timed out after 30s",
+                "hints": ["split it up"],
+            }
+        )
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        with pytest.raises(FusionError) as exc_info:
+            conn.send_command("extrude")
+        assert exc_info.value.error_kind == "TIMEOUT"
+        assert exc_info.value.hints == ["split it up"]
+
+
+class TestMutationTimeoutSafety:
+    """A timed-out mutation must NOT be retried — the add-in may have
+    queued or executed it already, and re-sending applies it twice."""
+
+    def _start_silent_server(self, received: list, max_accepts: int = 4):
+        """Accept connections, record each command, never respond."""
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(5)
+        port = srv.getsockname()[1]
+
+        def handler():
+            try:
+                for _ in range(max_accepts):
+                    c, _ = srv.accept()
+                    c.settimeout(5)
+                    try:
+                        data = c.recv(4096)
+                        if data:
+                            received.append(json.loads(data.split(b"\n")[0]))
+                    finally:
+                        c.close()
+            except OSError:
+                pass
+            finally:
+                srv.close()
+
+        threading.Thread(target=handler, daemon=True).start()
+        return port
+
+    def test_mutation_not_retried_on_timeout(self, monkeypatch):
+        monkeypatch.setattr("fusion360_mcp.connection._RETRY_DELAY", 0.01)
+        received = []
+        port = self._start_silent_server(received)
+
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        with pytest.raises(FusionError) as exc_info:
+            conn.send_command("extrude", {"distance": 5}, timeout=0.3)
+
+        assert exc_info.value.error_kind == "TIMEOUT"
+        assert "get_scene_info" in str(exc_info.value)
+        assert exc_info.value.hints
+        # The critical invariant: exactly ONE command reached the server.
+        assert len(received) == 1
+        assert received[0]["type"] == "extrude"
+
+    def test_read_only_command_retried_on_timeout(self, monkeypatch):
+        monkeypatch.setattr("fusion360_mcp.connection._RETRY_DELAY", 0.01)
+        received = []
+        port = self._start_silent_server(received)
+
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        with pytest.raises(ConnectionError):
+            conn.send_command("get_scene_info", timeout=0.3, retries=1)
+
+        # Read-only commands are safe to retry: 2 attempts total.
+        assert len(received) == 2
+
+    def test_ping_uses_short_timeout(self, monkeypatch):
+        """ping() must not block for the full command timeout."""
+        monkeypatch.setattr("fusion360_mcp.connection._PING_TIMEOUT", 0.2)
+        received = []
+        port = self._start_silent_server(received)
+
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        import time
+
+        t0 = time.monotonic()
+        assert conn.ping() is False
+        assert time.monotonic() - t0 < 2.0
+
+
+class TestEndpointChange:
+    """get_connection must not silently reuse a connection aimed at a
+    different host/port."""
+
+    def test_different_port_recreates_connection(self):
+        port, srv, _ = _start_echo_server()
+        import fusion360_mcp.connection as mod
+
+        saved = mod._connection
+        mod._connection = None
+        try:
+            c1 = get_connection(port=port)
+            c2 = get_connection(port=port + 1)  # nothing listens there
+            assert c2 is not c1
+            assert c2.port == port + 1
+            assert c2.connected is False  # connect() failed, object replaced
+        finally:
+            if mod._connection:
+                mod._connection.disconnect()
+            mod._connection = saved
+
+    def test_same_endpoint_reuses_connection(self):
+        port, srv, _ = _start_echo_server()
+        import fusion360_mcp.connection as mod
+
+        saved = mod._connection
+        mod._connection = None
+        try:
+            c1 = get_connection(port=port)
+            c2 = get_connection(port=port)
+            assert c1 is c2
+        finally:
+            if mod._connection:
+                mod._connection.disconnect()
+            mod._connection = saved

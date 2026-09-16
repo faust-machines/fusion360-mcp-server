@@ -1,5 +1,7 @@
 # Fusion360 MCP Server
 
+*Last updated: 2026-09-16*
+
 > **Beta** — This project is under active development. APIs and tool behavior may change between releases. Use at your own discretion. Feedback and bug reports welcome via [GitHub Issues](https://github.com/faust-machines/fusion360-mcp-server/issues).
 
 MCP server that connects AI coding agents to Autodesk Fusion 360 for CAD automation.

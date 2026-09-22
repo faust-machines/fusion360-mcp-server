@@ -1351,14 +1351,16 @@ class CommandHandler:
         faces = self._select_faces(body, face_selection)
 
         drafts = root.features.draftFeatures
+        # createInput wants a BRepFace array and three arguments; the angle is
+        # set on the input object afterwards, not passed in.
         inp = drafts.createInput(
-            faces,
+            [faces.item(i) for i in range(faces.count)],
             self._construction_plane(pull_direction_plane),
-            adsk.core.ValueInput.createByString(f"{angle} deg"),
             is_tangent_chain,
         )
+        inp.setSingleAngle(False, adsk.core.ValueInput.createByString(f"{angle} deg"))
         feat = drafts.add(inp)
-        return {"feature_name": feat.name, "angle": angle}
+        return {"feature_name": feat.name, "angle": angle, "face_count": faces.count}
 
     def split_body(
         self,

@@ -10,7 +10,7 @@ authors = [{ name = "Faust Machines" }]
 dependencies = [
     "anyio>=4.5",
     "click>=8.1",
-    "mcp>=1.0",
+    "mcp>=1.0,<2",
 ]
 
 [project.urls]

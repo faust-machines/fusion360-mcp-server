@@ -112,3 +112,51 @@ class TestCheckInterference:
         assert "interferenceResultCount" not in attrs, (
             "interferenceResultCount belongs to the old, non-existent API"
         )
+class TestDraftFaces:
+    """``DraftFeatures.createInput(inputFaces, plane, isTangentChain)``.
+
+    ``inputFaces`` is a BRepFace *array* — an ObjectCollection is rejected —
+    and the angle is not a parameter at all; it goes on the returned input via
+    ``setSingleAngle(isSymmetric, angle)``. Passing four arguments raised
+    "Wrong number or type of arguments for overloaded function", so every
+    ``draft_faces`` call failed.
+    """
+
+    def test_create_input_takes_three_arguments(self):
+        node = _method("draft_faces")
+        calls = [
+            n
+            for n in ast.walk(node)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "createInput"
+        ]
+        assert calls, "draft_faces must build a DraftFeatureInput"
+        for call in calls:
+            assert len(call.args) == 3, (
+                "DraftFeatures.createInput takes (inputFaces, plane, "
+                "isTangentChain); the angle is not a createInput parameter"
+            )
+
+    def test_sets_the_angle_on_the_input(self):
+        node = _method("draft_faces")
+        assert "setSingleAngle" in _called_attrs(node), (
+            "the draft angle must be applied with setSingleAngle(isSymmetric, "
+            "angle) on the DraftFeatureInput, not passed to createInput"
+        )
+
+    def test_passes_faces_as_an_array(self):
+        node = _method("draft_faces")
+        builds_a_list = any(
+            isinstance(n, (ast.ListComp, ast.List)) for n in ast.walk(node)
+        )
+        assert builds_a_list, (
+            "inputFaces must be a BRepFace array — _select_faces returns an "
+            "ObjectCollection, which createInput rejects"
+        )
+
+    def test_does_not_swallow_failures(self):
+        node = _method("draft_faces")
+        assert not _has_silent_except(node), (
+            "draft_faces must not use a bare 'except: pass'"
+        )

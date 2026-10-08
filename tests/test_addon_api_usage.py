@@ -160,3 +160,25 @@ class TestDraftFaces:
         assert not _has_silent_except(node), (
             "draft_faces must not use a bare 'except: pass'"
         )
+
+
+class TestMeasureDistance:
+    """``MeasureResults`` exposes ``positionOne`` / ``positionTwo``.
+
+    ``pointOnEntityOne`` / ``pointOnEntityTwo`` do not exist, so every
+    ``measure_distance`` call raised AttributeError after Fusion had already
+    computed the distance.
+    """
+
+    def test_reads_the_result_positions(self):
+        node = _method("measure_distance")
+        attrs = {
+            n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)
+        }
+        assert {"positionOne", "positionTwo"} <= attrs, (
+            "measure_distance must read MeasureResults.positionOne / "
+            "positionTwo"
+        )
+        assert not attrs & {"pointOnEntityOne", "pointOnEntityTwo"}, (
+            "MeasureResults has no pointOnEntityOne / pointOnEntityTwo"
+        )

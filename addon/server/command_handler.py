@@ -2582,14 +2582,14 @@ class CommandHandler:
         return {
             "distance": result.value,
             "point_one": [
-                result.pointOnEntityOne.x,
-                result.pointOnEntityOne.y,
-                result.pointOnEntityOne.z,
+                result.positionOne.x,
+                result.positionOne.y,
+                result.positionOne.z,
             ],
             "point_two": [
-                result.pointOnEntityTwo.x,
-                result.pointOnEntityTwo.y,
-                result.pointOnEntityTwo.z,
+                result.positionTwo.x,
+                result.positionTwo.y,
+                result.positionTwo.z,
             ],
         }
 

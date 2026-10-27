@@ -87,6 +87,7 @@ def test_expected_tools_present():
         "execute_code",
         # health
         "ping",
+        "get_operation_status",
         # new geometry
         "sweep",
         "loft",

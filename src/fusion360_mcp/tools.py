@@ -334,7 +334,9 @@ TOOLS: list[dict] = [
         "description": (
             "Run arbitrary Python in Fusion 360. "
             "The last expression's value is returned (REPL-style). "
-            "Pre-defined names: app, ui, design, component, adsk, math."
+            "Pre-defined names: app, ui, design, component, adsk, math. "
+            "If a long native export times out, poll the returned operation_id "
+            "with get_operation_status to recover its result; do not resubmit."
         ),
         "inputSchema": {
             "type": "object",
@@ -2330,11 +2332,28 @@ TOOLS: list[dict] = [
         "name": "ping",
         "title": "Ping",
         "description": (
-            "Health check — returns immediately without touching Fusion API"
+            "Check transport health immediately, or pass main_thread=true to "
+            "check Fusion's main-thread queue (may time out)."
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {},
+            "properties": {"main_thread": {"type": "boolean", "default": False}},
+        },
+    },
+    {
+        "name": "get_operation_status",
+        "title": "Get Operation Status",
+        "description": (
+            "Recover a timed-out command without executing it again. Works while "
+            "Fusion's main thread is blocked. Returns queued/running/cancelled/"
+            "completed/failed and the original response when finished. Finished "
+            "operations expire after ten minutes; only the latest 128 are kept. "
+            "IDs are lost when the add-in restarts."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["operation_id"],
+            "properties": {"operation_id": {"type": "string"}},
         },
     },
     # ── design type safety ──────────────────────────────────────────────
@@ -2439,6 +2458,7 @@ _READ_ONLY = {
     "check_interference",
     "compare_meshes",
     "ping",
+    "get_operation_status",
     "cam_list_setups",
     "cam_list_operations",
     "cam_get_operation_info",
@@ -2448,6 +2468,7 @@ _READ_ONLY = {
 _DESTRUCTIVE = {"delete_all", "delete_parameter"}
 _IDEMPOTENT = {
     "ping",
+    "get_operation_status",
     "get_scene_info",
     "get_object_info",
     "get_bounding_box",

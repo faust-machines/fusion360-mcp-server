@@ -108,7 +108,11 @@ def mock_command(command_type: str, params: dict[str, Any] | None = None) -> dic
 
 
 def _ping(_p: dict) -> dict:
-    return {"status": "pong"}
+    return {
+        "status": "pong",
+        "scope": "main_thread" if _p.get("main_thread") else "transport",
+        "main_thread_checked": bool(_p.get("main_thread")),
+    }
 
 
 def _get_scene_info(_p: dict) -> dict:
@@ -995,6 +999,11 @@ def _default_mock(p: dict) -> dict:
 
 _DISPATCH: dict[str, Any] = {
     "ping": _ping,
+    "get_operation_status": lambda p: {
+        "ok": False,
+        "error_kind": "INVALID_INPUT",
+        "error_message": "Unknown or expired operation_id (mock has no pending work)",
+    },
     "get_scene_info": _get_scene_info,
     "get_object_info": _get_object_info,
     "get_bounding_box": _get_bounding_box,

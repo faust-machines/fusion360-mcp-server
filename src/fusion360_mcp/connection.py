@@ -12,6 +12,7 @@ import logging
 import os
 import socket
 import time
+import uuid
 from typing import Any
 
 from .hints import classify as _classify
@@ -45,11 +46,16 @@ class FusionError(RuntimeError):
     """Structured error reported by the add-in (or a timed-out command)."""
 
     def __init__(
-        self, message: str, error_kind: str = "UNKNOWN", hints: list[str] | None = None
+        self,
+        message: str,
+        error_kind: str = "UNKNOWN",
+        hints: list[str] | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message)
         self.error_kind = error_kind
         self.hints = hints or []
+        self.details = details or {}
 
 
 class Fusion360Connection:
@@ -137,18 +143,25 @@ class Fusion360Connection:
         ``retries`` times with a fresh socket.  Mutation commands are
         **never** retried after a send was attempted: the add-in may have
         queued or executed the command already, and re-sending could apply
-        the change twice.
+        the change twice. Socket timeouts for any main-thread command also
+        return a recovery ID instead of retrying and queuing more work.
         """
         if not self._sock and not self.connect():
             raise ConnectionError(
                 "Not connected to Fusion 360.  Make sure the add-in is running."
             )
 
+        # Known before sending, so a lost response cannot lose the recovery ID.
+        tracked = command_type != "get_operation_status" and (
+            command_type != "ping" or (params or {}).get("main_thread", False)
+        )
+        operation_id = uuid.uuid4().hex if tracked else None
         payload = (
             json.dumps(
                 {
                     "type": command_type,
                     "params": params or {},
+                    **({"operation_id": operation_id} if tracked else {}),
                 }
             )
             + "\n"
@@ -162,20 +175,25 @@ class Fusion360Connection:
         except (socket.timeout, OSError, ConnectionError) as exc:
             log.error("Socket error: %s", exc)
             self.disconnect()
-            if is_mutation:
+            if is_mutation or (tracked and isinstance(exc, socket.timeout)):
                 raise FusionError(
                     f"{command_type}: no response from Fusion "
                     f"({exc}). The command was NOT retried, but it may "
-                    "still have executed — call get_scene_info to check "
-                    "the design state before trying again.",
+                    "still be executing. Poll get_operation_status with "
+                    f"operation_id={operation_id}; do not resubmit. After "
+                    "completion, call get_scene_info to check the design state.",
                     error_kind="TIMEOUT",
                     hints=[
-                        "Call get_scene_info to see whether the "
-                        "operation partially applied.",
-                        "Long operations (CAM toolpaths, complex fillets) "
-                        "exceed the add-in's 30s bridge timeout — split "
-                        "them into smaller steps.",
+                        "Poll get_operation_status using the operation_id. "
+                        "The transport failure leaves execution state unknown.",
+                        "Recovery requires an updated add-in. An unknown ID may "
+                        "mean the request was not received, the result expired, "
+                        "or the add-in restarted; it does not prove no execution.",
                     ],
+                    details={
+                        "operation_id": operation_id,
+                        "operation_state": "unknown",
+                    },
                 ) from exc
             if retries > 0:
                 log.info("Retrying (%d left)...", retries)
@@ -194,7 +212,16 @@ class Fusion360Connection:
                 kind, classified_hints = _classify(message)
                 if hints is None:
                     hints = classified_hints
-            raise FusionError(message, error_kind=kind, hints=hints)
+            raise FusionError(
+                message,
+                error_kind=kind,
+                hints=hints,
+                details={
+                    k: response[k]
+                    for k in ("operation_id", "operation_state")
+                    if k in response
+                },
+            )
 
         return response.get("result", {})
 

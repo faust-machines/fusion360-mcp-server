@@ -415,6 +415,8 @@ class TestStructuredErrors:
                 "error_kind": "TIMEOUT",
                 "message": "Command timed out after 30s",
                 "hints": ["split it up"],
+                "operation_id": "cloud-operation",
+                "operation_state": "running",
             }
         )
         conn = Fusion360Connection(host="127.0.0.1", port=port)
@@ -423,6 +425,15 @@ class TestStructuredErrors:
             conn.send_command("extrude")
         assert exc_info.value.error_kind == "TIMEOUT"
         assert exc_info.value.hints == ["split it up"]
+        assert exc_info.value.details == {
+            "operation_id": "cloud-operation",
+            "operation_state": "running",
+        }
+        from fusion360_mcp.server import _fusion_error_result
+
+        rendered = _fusion_error_result("extrude", exc_info.value)
+        assert "operation_id: cloud-operation" in rendered.content[0].text
+        assert "operation_state: running" in rendered.content[0].text
 
 
 class TestMutationTimeoutSafety:
@@ -499,6 +510,35 @@ class TestMutationTimeoutSafety:
         t0 = time.monotonic()
         assert conn.ping() is False
         assert time.monotonic() - t0 < 2.0
+
+    def test_main_thread_query_socket_timeout_has_id_and_is_not_retried(self):
+        class SilentSocket:
+            def __init__(self):
+                self.commands = []
+
+            def sendall(self, payload):
+                self.commands.append(json.loads(payload))
+
+            def settimeout(self, timeout):
+                pass
+
+            def recv(self, size):
+                raise socket.timeout("timed out")
+
+            def close(self):
+                pass
+
+        conn = Fusion360Connection()
+        sock = SilentSocket()
+        conn._sock = sock
+        with pytest.raises(FusionError) as caught:
+            conn.send_command("get_scene_info")
+        assert len(sock.commands) == 1
+        assert caught.value.details == {
+            "operation_id": sock.commands[0]["operation_id"],
+            "operation_state": "unknown",
+        }
+        assert not conn.connected
 
 
 class TestEndpointChange:

@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 import traceback
+import uuid
 
 import adsk.core
 
@@ -25,17 +26,28 @@ TIMER_INTERVAL_MS = 200  # backup polling interval
 class WorkItem:
     """One unit of work submitted from a socket thread."""
 
-    __slots__ = ("command", "result", "error", "done", "cancelled")
+    __slots__ = (
+        "command",
+        "result",
+        "error",
+        "done",
+        "cancelled",
+        "operation_id",
+        "state",
+        "finished_at",
+    )
 
     def __init__(self, command: dict):
         self.command = command
         self.result = None
         self.error = None
         self.done = threading.Event()
-        # Set when the waiting socket thread gave up (timeout).  A
-        # cancelled item is skipped by drain_queue so a timed-out command
-        # never executes late — the client has already reported failure.
+        # Only work that has not started can be cancelled on timeout.
+        # Running work stays tracked so the caller can recover its result.
         self.cancelled = False
+        self.operation_id = command.get("operation_id") or uuid.uuid4().hex
+        self.state = "queued"
+        self.finished_at = None
 
 
 class _MainThreadHandler(adsk.core.CustomEventHandler):
@@ -62,6 +74,9 @@ class EventBridge:
         self._app = app
         self._handler = command_handler
         self._queue: queue.Queue = queue.Queue()
+        self._lock = threading.Lock()
+        self._operations = {}
+        self._draining = False
 
         # Register a custom event on the main thread
         self._event = app.registerCustomEvent(CUSTOM_EVENT_ID)
@@ -84,12 +99,49 @@ class EventBridge:
         cmd_type = command.get("type", "?")
 
         # Fast-path: ping never touches Fusion API — answer immediately
-        if cmd_type == "ping":
+        if cmd_type == "get_operation_status":
+            return self.get_operation_status(
+                command.get("params", {}).get("operation_id")
+            )
+
+        if cmd_type == "ping" and not command.get("params", {}).get(
+            "main_thread", False
+        ):
             log.debug("ping (fast path)")
-            return {"status": "success", "result": {"ok": True, "status": "pong"}}
+            return {
+                "status": "success",
+                "result": {
+                    "ok": True,
+                    "status": "pong",
+                    "scope": "transport",
+                    "main_thread_checked": False,
+                },
+            }
 
         log.debug("submit cmd=%s", cmd_type)
+        operation_id = command.get("operation_id")
+        if operation_id is not None and (
+            not isinstance(operation_id, str)
+            or not operation_id
+            or len(operation_id) > 128
+        ):
+            return {
+                "status": "error",
+                "error_kind": "INVALID_INPUT",
+                "message": (
+                    "operation_id must be a nonempty string of at most 128 characters"
+                ),
+            }
         item = WorkItem(command)
+        with self._lock:
+            self._prune_operations()
+            if item.operation_id in self._operations:
+                return {
+                    "status": "error",
+                    "error_kind": "INVALID_INPUT",
+                    "message": "operation_id already exists; poll get_operation_status",
+                }
+            self._operations[item.operation_id] = item
         self._queue.put(item)
 
         # Poke the main thread
@@ -99,19 +151,45 @@ class EventBridge:
             pass  # timer will pick it up
 
         if not item.done.wait(timeout=timeout):
-            # The client has given up.  Cancel the item so drain_queue
-            # skips it instead of executing it late — a late execution
-            # plus a client retry would apply mutations twice.
-            item.cancelled = True
-            log.warning("Command %s timed out after %ss (cancelled)", cmd_type, timeout)
-            return {
-                "status": "error",
-                "error_kind": "TIMEOUT",
-                "message": f"Command timed out after {timeout}s",
-            }
+            with self._lock:
+                # Starting and cancellation share a lock: a cancelled queued
+                # mutation can never start after we report it as cancelled.
+                if item.state == "queued":
+                    item.cancelled = True
+                    item.state = "cancelled"
+                    item.finished_at = time.monotonic()
+                    item.done.set()
+                state = item.state
+            if state not in ("completed", "failed"):
+                running = state == "running"
+                message = (
+                    f"Command timed out after {timeout}s; operation "
+                    f"{item.operation_id} is {state}. "
+                    + (
+                        "Fusion may still be executing; interruption is unsafe. "
+                        if running
+                        else "Cancelled before execution. "
+                    )
+                    + "Poll get_operation_status using this ID; do not resubmit."
+                )
+                log.warning(message)
+                return {
+                    "status": "error",
+                    "error_kind": "TIMEOUT",
+                    "message": message,
+                    "operation_id": item.operation_id,
+                    "operation_state": state,
+                    "hints": [
+                        "A transport ping does not check Fusion's main thread.",
+                        "Running native exports and other Fusion API calls cannot "
+                        "be safely interrupted; poll this ID instead of resubmitting.",
+                    ],
+                }
+        return self._response(item)
 
+    @staticmethod
+    def _response(item):
         if item.error is not None:
-            log.error("Command %s failed: %s", cmd_type, item.error)
             kind, hints = classify(item.error)
             return {
                 "status": "error",
@@ -119,9 +197,45 @@ class EventBridge:
                 "hints": hints,
                 "message": item.error,
             }
-
-        log.debug("Command %s completed", cmd_type)
         return item.result
+
+    def _prune_operations(self):
+        """Retain at most 128 finished operations, for up to ten minutes.
+
+        Caller holds _lock. Running/queued work is never evicted.
+        """
+        finished = [
+            key
+            for key, item in self._operations.items()
+            if item.finished_at is not None
+        ]
+        now = time.monotonic()
+        for index, key in enumerate(finished):
+            if (
+                len(finished) - index > 128
+                or now - self._operations[key].finished_at > 600
+            ):
+                del self._operations[key]
+
+    def get_operation_status(self, operation_id):
+        """Socket-thread-only lookup; works even when Fusion is blocked."""
+        with self._lock:
+            self._prune_operations()
+            item = self._operations.get(operation_id)
+            if item is None:
+                return {
+                    "status": "error",
+                    "error_kind": "INVALID_INPUT",
+                    "message": "Unknown or expired operation_id (or add-in restarted)",
+                }
+            result = {
+                "ok": True,
+                "operation_id": operation_id,
+                "operation_state": item.state,
+            }
+            if item.state in ("completed", "failed"):
+                result["response"] = self._response(item)
+            return {"status": "success", "result": result}
 
     # ------------------------------------------------------------------
     # Called on Fusion's main thread (from CustomEventHandler.notify)
@@ -129,6 +243,17 @@ class EventBridge:
 
     def drain_queue(self):
         """Execute every queued work item (main thread only)."""
+        with self._lock:
+            if self._draining:
+                return
+            self._draining = True
+        try:
+            self._drain_queue()
+        finally:
+            with self._lock:
+                self._draining = False
+
+    def _drain_queue(self):
         while True:
             try:
                 item: WorkItem = self._queue.get_nowait()
@@ -136,11 +261,22 @@ class EventBridge:
                 break
 
             cmd_type = item.command.get("type", "?")
-            if item.cancelled:
-                log.info("Skipping cancelled command %s", cmd_type)
-                continue
+            with self._lock:
+                if item.cancelled:
+                    continue
+                item.state = "running"
             try:
-                if cmd_type == "reload_handler":
+                if cmd_type == "ping":
+                    item.result = {
+                        "status": "success",
+                        "result": {
+                            "ok": True,
+                            "status": "pong",
+                            "scope": "main_thread",
+                            "main_thread_checked": True,
+                        },
+                    }
+                elif cmd_type == "reload_handler":
                     # Must run on the main thread — CommandHandler's
                     # constructor touches the Fusion API.
                     self.reload_handler()
@@ -154,7 +290,16 @@ class EventBridge:
                 item.error = f"{exc}\n{traceback.format_exc()}"
                 log.error("Main-thread exec of %s raised: %s", cmd_type, exc)
             finally:
-                item.done.set()
+                with self._lock:
+                    response = self._response(item)
+                    failed = (
+                        response.get("status") == "error"
+                        or response.get("result", {}).get("ok") is False
+                    )
+                    item.state = "failed" if failed else "completed"
+                    item.finished_at = time.monotonic()
+                    item.done.set()
+                    self._prune_operations()
 
     # ------------------------------------------------------------------
     # Backup timer
@@ -209,9 +354,12 @@ class EventBridge:
                 item = self._queue.get_nowait()
             except queue.Empty:
                 break
-            item.cancelled = True
-            item.error = "Add-in stopped before the command executed"
-            item.done.set()
+            with self._lock:
+                item.cancelled = True
+                item.state = "cancelled"
+                item.finished_at = time.monotonic()
+                item.error = "Add-in stopped before the command executed"
+                item.done.set()
         try:
             self._event.remove(self._event_handler)
         except Exception:

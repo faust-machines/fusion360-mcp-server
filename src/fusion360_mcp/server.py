@@ -49,6 +49,7 @@ def _send(
 def _fusion_error_result(name: str, exc: FusionError) -> types.CallToolResult:
     """Render a structured add-in error as an isError tool result."""
     lines = [f"**{name}** ERROR ({exc.error_kind})", f"  {exc}"]
+    lines.extend(f"  {k}: {v}" for k, v in exc.details.items())
     if exc.hints:
         lines.append("  hints:")
         lines.extend(f"    - {h}" for h in exc.hints)

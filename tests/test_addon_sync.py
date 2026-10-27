@@ -123,7 +123,8 @@ def test_tools_match_addon_dispatch():
     """
     from fusion360_mcp.tools import TOOLS
 
-    tool_names = {t["name"] for t in TOOLS}
+    # get_operation_status is handled on the socket thread by EventBridge.
+    tool_names = {t["name"] for t in TOOLS} - {"get_operation_status"}
     dispatch = (
         _extract_command_dispatch_keys(
             REPO_ROOT / "addon" / "server" / "command_handler.py"

@@ -103,6 +103,7 @@ class TestToolAnnotations:
             "check_interference",
             "compare_meshes",
             "ping",
+            "get_operation_status",
             "cam_list_setups",
             "cam_list_operations",
             "cam_get_operation_info",

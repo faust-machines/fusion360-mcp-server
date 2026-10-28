@@ -290,7 +290,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 
 ## MCP Protocol Features
 
-- **Tool annotations** — each tool is tagged with `readOnlyHint`, `destructiveHint`, and `idempotentHint` so MCP clients can auto-approve safe operations
+- **Tool annotations:** Each tool includes `readOnlyHint`, `destructiveHint`, and `idempotentHint`. These are behavioral hints, not permission checks. Under the [MCP Tools specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools), clients must treat annotations as untrusted unless the server is trusted; a read-only hint alone does not establish that a call is safe.
 - **Resources** — `fusion360://status`, `fusion360://design`, `fusion360://parameters` for passive state inspection
 - **Resource templates** — `fusion360://body/{name}`, `fusion360://component/{name}` for dynamic entity lookup
 - **Prompts** — `create-box`, `model-threaded-bolt`, `sheet-metal-enclosure` workflow templates

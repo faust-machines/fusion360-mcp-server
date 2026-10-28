@@ -205,7 +205,7 @@ Known `error_kind` values: `PROFILE_NOT_CLOSED`, `SKETCH_NOT_FOUND`, `BODY_NOT_F
 
 ## MCP protocol features
 
-- **Tool annotations** — every tool is tagged `readOnlyHint`, `destructiveHint`, `idempotentHint` so clients can auto-approve safe operations
+- **Tool annotations:** Every tool has `readOnlyHint`, `destructiveHint`, and `idempotentHint` metadata. These are untrusted behavioral hints unless supplied by a trusted server, not authorization or proof of safe execution. See the [MCP Tools specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools).
 - **Resources** — `fusion360://status`, `fusion360://design`, `fusion360://parameters`
 - **Resource templates** — `fusion360://body/{name}`, `fusion360://component/{name}`
 - **Prompts** — `create-box`, `model-threaded-bolt`, `sheet-metal-enclosure` workflow templates

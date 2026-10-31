@@ -15,6 +15,7 @@ import adsk.core
 
 from . import get_logger
 from .hints import classify
+from .security import SecurityError, dev_enabled
 
 log = get_logger("bridge")
 
@@ -141,6 +142,11 @@ class EventBridge:
                 continue
             try:
                 if cmd_type == "reload_handler":
+                    if not dev_enabled():
+                        raise SecurityError(
+                            "reload_handler requires FUSION_MCP_DEV=1 "
+                            "in the add-in environment"
+                        )
                     # Must run on the main thread — CommandHandler's
                     # constructor touches the Fusion API.
                     self.reload_handler()

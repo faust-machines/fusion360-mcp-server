@@ -24,6 +24,7 @@ from . import get_logger
 from . import hints as _hints
 from . import hole_geometry as _hole_geom
 from . import parameter_units as _param_units
+from .security import SecurityError, exec_enabled, resolve_allowed_path
 
 log = get_logger("handler")
 
@@ -1520,6 +1521,7 @@ class CommandHandler:
         if file_path is None:
             desktop = os.path.join(os.path.expanduser("~"), "Desktop")
             file_path = os.path.join(desktop, f"{body_name}.stl")
+        file_path = resolve_allowed_path(file_path)
 
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
@@ -1563,6 +1565,7 @@ class CommandHandler:
         if file_path is None:
             desktop = os.path.join(os.path.expanduser("~"), "Desktop")
             file_path = os.path.join(desktop, f"{body_name}.step")
+        file_path = resolve_allowed_path(file_path)
 
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
@@ -1601,6 +1604,7 @@ class CommandHandler:
         if file_path is None:
             desktop = os.path.join(os.path.expanduser("~"), "Desktop")
             file_path = os.path.join(desktop, f"{doc_name}.f3d")
+        file_path = resolve_allowed_path(file_path)
 
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
@@ -1711,6 +1715,7 @@ class CommandHandler:
                 "Desktop",
                 f"{doc_name}_views_{ts}",
             )
+        output_dir = resolve_allowed_path(output_dir)
         os.makedirs(output_dir, exist_ok=True)
 
         vp = self.app.activeViewport
@@ -1852,6 +1857,7 @@ class CommandHandler:
         self, file_path: str, component_name: str = None, units: str = "mm"
     ):
         """Import mesh file (STL/OBJ/3MF) as mesh body. Values returned in cm."""
+        file_path = resolve_allowed_path(file_path)
         if not os.path.exists(file_path):
             raise RuntimeError(f"Mesh file not found: {file_path}")
 
@@ -3416,11 +3422,12 @@ class CommandHandler:
 
         if not output_folder:
             output_folder = os.path.join(os.path.expanduser("~"), "Desktop")
+        output_folder = resolve_allowed_path(output_folder)
 
         # Accept a full path to a .cps file, or resolve a short name against
         # the legacy local post folder when the build still provides one.
         if post_processor.endswith(".cps") or os.path.sep in post_processor:
-            post_config = post_processor
+            post_config = resolve_allowed_path(post_processor)
         else:
             post_folder = getattr(cam, "genericPostFolder", None)
             if not post_folder:
@@ -3526,6 +3533,11 @@ class CommandHandler:
     # ------------------------------------------------------------------
 
     def execute_code(self, code: str):
+        if not exec_enabled():
+            raise SecurityError(
+                "execute_code is disabled; set FUSION_MCP_ENABLE_EXEC=1 "
+                "in the add-in environment"
+            )
         design = self._design()
         type_before = design.designType
 

@@ -1,5 +1,7 @@
 """Tests for the tool registry."""
 
+import pytest
+
 from fusion360_mcp.tools import TOOLS, get_tool_by_name, get_tool_list
 
 
@@ -39,12 +41,40 @@ def test_no_duplicate_tool_names():
     )
 
 
-def test_get_tool_list_returns_mcp_types():
+def test_get_tool_list_returns_mcp_types(monkeypatch):
+    monkeypatch.delenv("FUSION_MCP_ENABLE_EXEC", raising=False)
     tools = get_tool_list()
-    assert len(tools) == len(TOOLS)
+    # execute_code is hidden unless the exec flag is on
+    assert len(tools) == len(TOOLS) - 1
     for tool in tools:
         assert hasattr(tool, "name")
         assert hasattr(tool, "inputSchema")
+
+
+def test_get_tool_list_omits_execute_code_by_default(monkeypatch):
+    monkeypatch.delenv("FUSION_MCP_ENABLE_EXEC", raising=False)
+    names = {t.name for t in get_tool_list()}
+    assert "execute_code" not in names
+    assert "ping" in names
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "Yes", " yes "])
+def test_get_tool_list_includes_execute_code_when_exec_on(monkeypatch, value):
+    monkeypatch.setenv("FUSION_MCP_ENABLE_EXEC", value)
+    tools = get_tool_list()
+    assert len(tools) == len(TOOLS)
+    assert "execute_code" in {t.name for t in tools}
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "on"])
+def test_get_tool_list_omits_execute_code_for_other_values(monkeypatch, value):
+    monkeypatch.setenv("FUSION_MCP_ENABLE_EXEC", value)
+    assert "execute_code" not in {t.name for t in get_tool_list()}
+
+
+def test_execute_code_is_marked_destructive():
+    tool = get_tool_by_name("execute_code")
+    assert tool["annotations"]["destructiveHint"] is True
 
 
 def test_get_tool_by_name_found():

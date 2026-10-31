@@ -37,16 +37,18 @@ def run(context):
         from .server import LOG_PATH, get_logger
         from .server.command_handler import CommandHandler
         from .server.event_bridge import EventBridge
+        from .server.security import load_or_create_token
         from .server.socket_server import Fusion360MCPServer
 
         _log = get_logger("main")
 
         host = os.environ.get("FUSION_MCP_HOST", "localhost")
         port = int(os.environ.get("FUSION_MCP_PORT", "9876"))
+        token = load_or_create_token()
 
         _handler = CommandHandler()
         _bridge = EventBridge(_app, _handler)
-        _server = Fusion360MCPServer(_bridge, host=host, port=port)
+        _server = Fusion360MCPServer(_bridge, host=host, port=port, token=token)
         _server.start()
 
         _log.info("Fusion360MCP loaded - server on %s:%s  (log: %s)",

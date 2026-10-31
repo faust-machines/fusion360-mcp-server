@@ -5,6 +5,8 @@ Each entry becomes a tool that Claude can call.  The ``inputSchema`` is
 JSON Schema that the MCP SDK validates before forwarding arguments.
 """
 
+import os
+
 import mcp.types as types
 
 TOOLS: list[dict] = [
@@ -2445,7 +2447,7 @@ _READ_ONLY = {
     "get_design_type",
     "render_view",
 }
-_DESTRUCTIVE = {"delete_all", "delete_parameter"}
+_DESTRUCTIVE = {"delete_all", "delete_parameter", "execute_code"}
 _IDEMPOTENT = {
     "ping",
     "get_scene_info",
@@ -2479,10 +2481,24 @@ for _t in TOOLS:
     }
 
 
+_EXEC_ENV = "FUSION_MCP_ENABLE_EXEC"
+
+
+def _exec_enabled() -> bool:
+    """True when execute_code is opted in (see @exec)."""
+    return os.environ.get(_EXEC_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
 def get_tool_list() -> list[types.Tool]:
-    """Convert tool dicts to MCP Tool objects."""
+    """Convert tool dicts to MCP Tool objects.
+
+    execute_code is left out unless FUSION_MCP_ENABLE_EXEC is set.
+    """
     result = []
+    exec_on = _exec_enabled()
     for t in TOOLS:
+        if t["name"] == "execute_code" and not exec_on:
+            continue
         ann = t.get("annotations")
         tool = types.Tool(
             name=t["name"],

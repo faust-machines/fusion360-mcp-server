@@ -111,7 +111,20 @@ uvx fusion360-mcp-server --mode socket --host 192.168.1.42
 FUSION_MCP_HOST=192.168.1.42 uvx fusion360-mcp-server --mode socket
 ```
 
-**Security note:** the TCP socket has no authentication. Only expose it on a trusted LAN — never bind to `0.0.0.0` on a host reachable from the public internet.
+**Security note:** the token travels in clear text over TCP. Only expose the socket on a trusted LAN — never bind to `0.0.0.0` on a host reachable from the public internet. On the remote host, set `FUSION_MCP_TOKEN` to the content of the Fusion host's token file.
+
+### Security settings
+
+The add-in requires a shared token on every request. On first start it writes a random token to `~/.fusion360mcp/token` (mode 0600). The MCP server on the same machine reads that file. Requests with a missing or wrong token, and non-JSON input such as an HTTP request, close the connection.
+
+| Variable | Where | Default | Effect |
+|---|---|---|---|
+| `FUSION_MCP_TOKEN` | add-in and MCP server | unset | Overrides the token file. Use the same value on both sides. |
+| `FUSION_MCP_ENABLE_EXEC` | add-in and MCP server | off | `1` enables `execute_code` (arbitrary Python inside Fusion). Off, the add-in rejects it and the server hides the tool. |
+| `FUSION_MCP_ALLOWED_DIRS` | add-in | `~/Desktop`, `~/Documents` | Folders that export, import and CAM post-process paths may point into, separated by `:` (`;` on Windows). |
+| `FUSION_MCP_DEV` | add-in | off | `1` enables the `reload_handler` developer command. |
+
+Fusion reads environment variables when it starts. After changing one, restart Fusion.
 
 ### 3. Verify
 

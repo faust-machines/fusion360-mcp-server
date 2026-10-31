@@ -39,6 +39,25 @@ _TIMEOUT = 45.0
 _PING_TIMEOUT = 5.0
 _MAX_RETRIES = 2
 _RETRY_DELAY = 1.0  # seconds between reconnect attempts
+_TOKEN_ENV = "FUSION_MCP_TOKEN"
+_TOKEN_PATH = os.path.join("~", ".fusion360mcp", "token")
+
+
+def _read_token() -> str:
+    """Return the add-in auth token (see @proto).
+
+    Env FUSION_MCP_TOKEN wins when non-empty, else the token file is used.
+    Read on every call, so a rotated token is picked up without a restart.
+    A missing token yields "" and the add-in answers with AUTH.
+    """
+    env_token = os.environ.get(_TOKEN_ENV, "").strip()
+    if env_token:
+        return env_token
+    try:
+        with open(os.path.expanduser(_TOKEN_PATH), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
 
 
 class FusionError(RuntimeError):
@@ -149,6 +168,7 @@ class Fusion360Connection:
                 {
                     "type": command_type,
                     "params": params or {},
+                    "token": _read_token(),
                 }
             )
             + "\n"

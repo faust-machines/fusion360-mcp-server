@@ -16,20 +16,24 @@ import time
 import traceback
 
 from . import get_logger
+from .security import check_token
 
 log = get_logger("socket")
 
 _RESTART_DELAY = 2.0  # seconds before rebinding after socket error
 _MAX_RESTARTS = 10  # consecutive restart cap before giving up
+_MAX_BUFFER_BYTES = 16 * 1024 * 1024  # close clients that send more unframed data
 
 
 class Fusion360MCPServer:
     """TCP server that receives JSON commands and dispatches via EventBridge."""
 
-    def __init__(self, event_bridge, host="localhost", port=9876):
+    def __init__(self, event_bridge, host="localhost", port=9876, token: str = ""):
         self.host = host
         self.port = port
         self._bridge = event_bridge
+        # Empty token: every request is rejected (fail closed).
+        self._token = token
         self._running = False
         self._socket = None
         self._accept_thread = None
@@ -175,6 +179,11 @@ class Fusion360MCPServer:
                 if not chunk:
                     break
                 buf += chunk
+                if len(buf) > _MAX_BUFFER_BYTES:
+                    log.warning(
+                        "Client buffer over %d bytes — closing", _MAX_BUFFER_BYTES
+                    )
+                    break
 
                 # Newline-delimited JSON messages
                 while b"\n" in buf:
@@ -184,23 +193,23 @@ class Fusion360MCPServer:
                         continue
                     try:
                         command = json.loads(line)
-                    except json.JSONDecodeError:
-                        self._send(
-                            client, {"status": "error", "message": "Invalid JSON"}
-                        )
-                        continue
-                    self._dispatch(client, command)
+                    except ValueError:
+                        self._reject(client, "BAD_REQUEST", "Invalid JSON")
+                        return
+                    if not self._accept(client, command):
+                        return
 
                 # Fallback: try raw JSON blob (no newline framing)
-                if buf:
-                    stripped = buf.strip()
-                    if stripped:
-                        try:
-                            command = json.loads(stripped)
-                            buf = b""
-                            self._dispatch(client, command)
-                        except json.JSONDecodeError:
-                            pass  # incomplete — wait for more data
+                stripped = buf.strip()
+                if stripped:
+                    try:
+                        command = json.loads(stripped)
+                    except ValueError:
+                        command = None  # incomplete — wait for more data
+                    else:
+                        buf = b""
+                        if not self._accept(client, command):
+                            return
         except Exception:
             if self._running:
                 log.debug("Client handler error:\n%s", traceback.format_exc())
@@ -216,6 +225,27 @@ class Fusion360MCPServer:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _accept(self, client, command) -> bool:
+        """Check the token of a parsed message and dispatch it.
+
+        Returns False when the request was rejected and the client must be closed.
+        """
+        if not isinstance(command, dict):
+            self._reject(client, "BAD_REQUEST", "Request must be a JSON object")
+            return False
+        token = command.pop("token", None)
+        if not check_token(self._token, token):
+            self._reject(client, "AUTH", "Missing or invalid token")
+            return False
+        self._dispatch(client, command)
+        return True
+
+    def _reject(self, client, error_kind: str, message: str):
+        log.warning("Rejected client request: %s", message)
+        self._send(
+            client, {"status": "error", "error_kind": error_kind, "message": message}
+        )
 
     def _dispatch(self, client, command):
         """Submit command to bridge and send response back to client."""

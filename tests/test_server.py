@@ -121,7 +121,7 @@ class TestToolAnnotations:
     def test_destructive_tools(self):
         from fusion360_mcp.tools import TOOLS
 
-        destructive = {"delete_all", "delete_parameter"}
+        destructive = {"delete_all", "delete_parameter", "execute_code"}
         for t in TOOLS:
             ann = t["annotations"]
             if t["name"] in destructive:

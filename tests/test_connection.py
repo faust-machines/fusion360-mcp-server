@@ -501,6 +501,125 @@ class TestMutationTimeoutSafety:
         assert time.monotonic() - t0 < 2.0
 
 
+class TestAuthToken:
+    """Every request carries the token from env or ~/.fusion360mcp/token."""
+
+    def _start_recording_server(self, received: list, max_commands: int = 2):
+        """Accept one connection, record each command line, answer success."""
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+
+        def handler():
+            try:
+                c, _ = srv.accept()
+                buf = b""
+                try:
+                    while len(received) < max_commands:
+                        chunk = c.recv(4096)
+                        if not chunk:
+                            break
+                        buf += chunk
+                        while b"\n" in buf and len(received) < max_commands:
+                            line, buf = buf.split(b"\n", 1)
+                            received.append(json.loads(line))
+                            c.sendall(
+                                (json.dumps({"status": "success", "result": {}}) + "\n")
+                                .encode()
+                            )
+                finally:
+                    c.close()
+            except OSError:
+                pass
+            finally:
+                srv.close()
+
+        threading.Thread(target=handler, daemon=True).start()
+        return port
+
+    def _isolate(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("FUSION_MCP_TOKEN", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+    def _write_token_file(self, tmp_path, content: str):
+        d = tmp_path / ".fusion360mcp"
+        d.mkdir(exist_ok=True)
+        (d / "token").write_text(content, encoding="utf-8")
+
+    def test_token_from_env_in_payload(self, monkeypatch, tmp_path):
+        self._isolate(monkeypatch, tmp_path)
+        monkeypatch.setenv("FUSION_MCP_TOKEN", "env-token")
+        received = []
+        port = self._start_recording_server(received, max_commands=1)
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        conn.send_command("ping", retries=0)
+        assert received[0]["token"] == "env-token"
+        assert received[0]["type"] == "ping"
+        conn.disconnect()
+
+    def test_token_from_file_in_payload(self, monkeypatch, tmp_path):
+        self._isolate(monkeypatch, tmp_path)
+        self._write_token_file(tmp_path, "file-token\n")
+        received = []
+        port = self._start_recording_server(received, max_commands=1)
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        conn.send_command("ping", retries=0)
+        assert received[0]["token"] == "file-token"  # stripped
+        conn.disconnect()
+
+    def test_env_wins_over_file(self, monkeypatch, tmp_path):
+        self._isolate(monkeypatch, tmp_path)
+        self._write_token_file(tmp_path, "file-token")
+        monkeypatch.setenv("FUSION_MCP_TOKEN", "env-token")
+        received = []
+        port = self._start_recording_server(received, max_commands=1)
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        conn.send_command("ping", retries=0)
+        assert received[0]["token"] == "env-token"
+        conn.disconnect()
+
+    def test_empty_env_falls_back_to_file(self, monkeypatch, tmp_path):
+        self._isolate(monkeypatch, tmp_path)
+        self._write_token_file(tmp_path, "file-token")
+        monkeypatch.setenv("FUSION_MCP_TOKEN", "")
+        received = []
+        port = self._start_recording_server(received, max_commands=1)
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        conn.send_command("ping", retries=0)
+        assert received[0]["token"] == "file-token"
+        conn.disconnect()
+
+    def test_missing_token_sends_empty_string(self, monkeypatch, tmp_path):
+        self._isolate(monkeypatch, tmp_path)  # no env, no file
+        received = []
+        port = self._start_recording_server(received, max_commands=1)
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        conn.send_command("ping", retries=0)
+        assert received[0]["token"] == ""
+        conn.disconnect()
+
+    def test_token_read_on_every_command(self, monkeypatch, tmp_path):
+        """No caching: a rotated token file is picked up by the next command."""
+        self._isolate(monkeypatch, tmp_path)
+        self._write_token_file(tmp_path, "first")
+        received = []
+        port = self._start_recording_server(received, max_commands=2)
+        conn = Fusion360Connection(host="127.0.0.1", port=port)
+        conn.connect()
+        conn.send_command("ping", retries=0)
+        self._write_token_file(tmp_path, "second")
+        conn.send_command("ping", retries=0)
+        assert [r["token"] for r in received] == ["first", "second"]
+        conn.disconnect()
+
+
 class TestEndpointChange:
     """get_connection must not silently reuse a connection aimed at a
     different host/port."""

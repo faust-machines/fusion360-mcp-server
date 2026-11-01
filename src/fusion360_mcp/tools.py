@@ -639,6 +639,74 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "set_joint_value",
+        "title": "Set Joint Value",
+        "description": (
+            "Drive a joint to a value and confirm Fusion kept it. Angles are in "
+            "degrees unless units='rad'; slide values are lengths in cm and are "
+            "never converted. Works on as-built joints unless as_built=False. "
+            "Fusion resets joint values to zero on the next design.computeAll(), "
+            "so avoid recomputing after this call - the command itself does not."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["value"],
+            "properties": {
+                "value": {
+                    "type": "number",
+                    "description": (
+                        "Target value: degrees for rotations (or radians with "
+                        "units='rad'), centimetres for slide values."
+                    ),
+                },
+                "joint_name": {
+                    "type": "string",
+                    "description": "Joint to drive. Omit to use joint_index.",
+                },
+                "joint_index": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": (
+                        "Index into the joint collection when joint_name is omitted."
+                    ),
+                },
+                "units": {
+                    "type": "string",
+                    "enum": ["deg", "rad"],
+                    "default": "deg",
+                    "description": (
+                        "Units for angle values only; slide values are always cm."
+                    ),
+                },
+                "value_kind": {
+                    "type": "string",
+                    "enum": [
+                        "rotation",
+                        "slide",
+                        "primary_slide",
+                        "secondary_slide",
+                        "pitch",
+                        "yaw",
+                        "roll",
+                    ],
+                    "description": (
+                        "Which value to drive on joints carrying more than one. "
+                        "Defaults to rotation (pitch for ball joints). Use "
+                        "primary_slide/secondary_slide for planar and "
+                        "pitch/yaw/roll for ball."
+                    ),
+                },
+                "as_built": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Search as-built joints (True) or regular joints (False)."
+                    ),
+                },
+            },
+        },
+    },
+    {
         "name": "list_components",
         "title": "List Components",
         "description": "List all components in the design",

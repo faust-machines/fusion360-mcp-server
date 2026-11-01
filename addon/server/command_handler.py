@@ -181,6 +181,7 @@ class CommandHandler:
                 # assembly
                 "create_component": self.create_component,
                 "add_joint": self.add_joint,
+                "set_joint_value": self.set_joint_value,
                 "create_as_built_joint": self.create_as_built_joint,
                 "create_rigid_group": self.create_rigid_group,
                 # inspection / analysis
@@ -2779,6 +2780,143 @@ class CommandHandler:
             "joint_type": joint_type,
             "motion": joint.jointMotion.objectType.split("::")[-1],
             "kept_current_positions": True,
+        }
+
+    # JointMotion attribute that carries the driveable value, by motion type,
+    # with the value_kind names that select it. BallJointMotion exposes
+    # pitchValue/yawValue/rollValue and no rotationValue; cylindrical, pin-slot
+    # and planar joints carry both an angle and slide values.
+    _JOINT_VALUE_ATTRIBUTES = {
+        "RevoluteJointMotion": {"rotation": "rotationValue"},
+        "SliderJointMotion": {"slide": "slideValue"},
+        "CylindricalJointMotion": {
+            "rotation": "rotationValue",
+            "slide": "slideValue",
+        },
+        "PinSlotJointMotion": {
+            "rotation": "rotationValue",
+            "slide": "slideValue",
+        },
+        "PlanarJointMotion": {
+            "rotation": "rotationValue",
+            "slide": "primarySlideValue",
+            "primary_slide": "primarySlideValue",
+            "secondary_slide": "secondarySlideValue",
+        },
+        "BallJointMotion": {
+            "rotation": "pitchValue",
+            "pitch": "pitchValue",
+            "yaw": "yawValue",
+            "roll": "rollValue",
+        },
+    }
+
+    # Attributes stored as an angle, so ``units`` applies to them. Everything
+    # else is a length in Fusion's internal unit, cm, and passes through.
+    _JOINT_ANGLE_ATTRIBUTES = frozenset(
+        {"rotationValue", "pitchValue", "yawValue", "rollValue"}
+    )
+
+    def set_joint_value(
+        self,
+        value: float,
+        joint_name: str = None,
+        joint_index: int = 0,
+        units: str = "deg",
+        value_kind: str = None,
+        as_built: bool = True,
+    ):
+        """Drive a joint to *value* and confirm Fusion kept it.
+
+        Fusion resets a joint value to zero the next time ``design.computeAll()``
+        runs, which makes a naive set-then-recompute look like the API silently
+        ignored the assignment.  This method therefore never recomputes: it sets
+        the value, refreshes the viewport, reads the value back and raises if it
+        did not stick.
+
+        ``units`` is ``deg`` (default) or ``rad`` and applies to angle values
+        only; slide values are centimetres.  ``value_kind`` selects the
+        attribute: ``rotation`` or ``slide`` on cylindrical and pin-slot,
+        ``primary_slide``/``secondary_slide`` on planar, and
+        ``pitch``/``yaw``/``roll`` on ball joints.
+        """
+        root = self._root()
+        collection = root.asBuiltJoints if as_built else root.joints
+
+        joint = None
+        if joint_name:
+            for i in range(collection.count):
+                candidate = collection.item(i)
+                if candidate.name == joint_name:
+                    joint = candidate
+                    break
+            if joint is None:
+                kind = "as-built " if as_built else ""
+                raise RuntimeError(
+                    f"{kind}joint '{joint_name}' not found "
+                    f"({collection.count} {kind}joints in the design)"
+                )
+        else:
+            if collection.count == 0:
+                raise RuntimeError(
+                    "No as-built joints in the design; pass as_built=False for "
+                    "regular joints or create one first"
+                )
+            joint = collection.item(joint_index)
+
+        motion = joint.jointMotion
+        motion_kind = motion.objectType.split("::")[-1]
+        if motion_kind == "RigidJointMotion":
+            raise RuntimeError(
+                f"'{joint.name}' is a rigid joint; it has no value to drive"
+            )
+
+        kinds = self._JOINT_VALUE_ATTRIBUTES.get(motion_kind)
+        if kinds is None:
+            raise RuntimeError(
+                f"'{joint.name}' has motion {motion_kind}, which this command "
+                f"cannot drive; known types: "
+                f"{sorted(self._JOINT_VALUE_ATTRIBUTES)}"
+            )
+
+        if value_kind:
+            attribute = kinds.get(value_kind)
+            if attribute is None:
+                raise RuntimeError(
+                    f"value_kind '{value_kind}' does not apply to {motion_kind}; "
+                    f"use one of {sorted(kinds)}"
+                )
+        else:
+            attribute = kinds.get("rotation") or next(iter(kinds.values()))
+
+        if attribute in self._JOINT_ANGLE_ATTRIBUTES:
+            target = value if units == "rad" else math.radians(value)
+            value_units = units
+        else:
+            target = value
+            value_units = "cm"
+
+        setattr(motion, attribute, target)
+        self.app.activeViewport.refresh()
+
+        read_back = getattr(joint.jointMotion, attribute)
+        if abs(read_back - target) > 1e-6:
+            raise RuntimeError(
+                f"Fusion did not keep the requested value on '{joint.name}' "
+                f"(set {target:.6f} {value_units}, read back "
+                f"{read_back:.6f}). A design.computeAll() after setting a joint "
+                f"value resets it to zero."
+            )
+
+        return {
+            "joint_name": joint.name,
+            "motion": motion_kind,
+            "value_kind": value_kind,
+            "attribute": attribute,
+            "value": round(value, 6),
+            "units": value_units,
+            "read_back": round(read_back, 9),
+            "applied": True,
         }
 
     def create_rigid_group(self, component_names: list, include_children: bool = True):

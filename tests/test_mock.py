@@ -937,6 +937,43 @@ class TestMockRenameBody:
         assert result["new_name"] == "ShellTop"
 
 
+class TestMockSetJointValue:
+    """The mock must resolve the attribute and unit the add-in would.
+
+    It holds no design, so it resolves from value_kind rather than from the
+    joint's motion type. Reporting rotationValue/degrees for every kind would
+    reproduce, in mock mode, the bug that made slides 57x too short.
+    """
+
+    @pytest.mark.parametrize(
+        "value_kind,attribute,units",
+        [
+            (None, "rotationValue", "deg"),
+            ("rotation", "rotationValue", "deg"),
+            ("slide", "slideValue", "cm"),
+            ("primary_slide", "primarySlideValue", "cm"),
+            ("secondary_slide", "secondarySlideValue", "cm"),
+            ("pitch", "pitchValue", "deg"),
+            ("yaw", "yawValue", "deg"),
+            ("roll", "rollValue", "deg"),
+        ],
+    )
+    def test_resolves_attribute_and_unit(self, value_kind, attribute, units):
+        params = {"value": 2}
+        if value_kind is not None:
+            params["value_kind"] = value_kind
+
+        result = mock_command("set_joint_value", params)
+
+        assert result["attribute"] == attribute
+        assert result["units"] == units
+
+    def test_slide_values_are_not_converted(self):
+        result = mock_command("set_joint_value", {"value": 2, "value_kind": "slide"})
+        assert result["read_back"] == 2
+        assert result["units"] == "cm"
+
+
 class TestMockFallback:
     def test_unknown_command_returns_warning(self):
         result = mock_command("totally_unknown_command", {"x": 1})

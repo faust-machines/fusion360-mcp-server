@@ -112,8 +112,14 @@ def test_joint_motion_setters_cover_every_schema_type():
         )
 
 
-def test_motion_setter_arities_match_the_fusion_api():
-    """Direction counts were verified against Fusion: 0, 1 or 2 - never inferred."""
+def test_motion_setter_arities_are_pinned():
+    """Pin the direction counts in _JOINT_MOTION_SETTERS against drift.
+
+    This is an ast check, so it cannot prove Fusion accepts these arities: a
+    wrong table would carry the same wrong numbers. All seven counts were
+    confirmed by creating every joint type in Fusion, which raises TypeError on
+    a wrong argument count.
+    """
     setters = _class_assign("_JOINT_MOTION_SETTERS")
 
     assert setters["rigid"][1] == 0
@@ -278,3 +284,149 @@ def test_ball_joint_reverses_its_direction_arguments():
             f"{method_name} must set motion through _apply_joint_motion so the "
             "ball direction order (and future quirks) stay in one place"
         )
+
+
+def test_set_joint_value_never_recomputes_the_design():
+    """A joint value must not be followed by design.computeAll().
+
+    Fusion keeps the value set on a JointMotion until a recompute, which then
+    resets it to zero - the naive "set then recompute" sequence looks exactly
+    like the API silently ignoring the assignment. This command must therefore
+    avoid computeAll and verify the read-back instead.
+    """
+    node = _method("set_joint_value")
+
+    recomputes = [
+        n
+        for n in ast.walk(node)
+        if isinstance(n, ast.Attribute) and n.attr == "computeAll"
+    ]
+    assert not recomputes, (
+        "set_joint_value must not call computeAll: it resets the joint value to "
+        "zero, which is why driving a joint appeared to do nothing"
+    )
+
+    called = {
+        n.func.attr
+        for n in ast.walk(node)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    }
+    assert "refresh" in called, "set_joint_value should refresh the viewport"
+    assert any(isinstance(n, ast.Raise) and n.exc for n in ast.walk(node)), (
+        "set_joint_value must raise when Fusion does not keep the requested value"
+    )
+
+
+def test_set_joint_value_covers_every_driveable_motion_type():
+    """Every non-rigid motion type maps to the attribute Fusion actually has.
+
+    BallJointMotion exposes pitch/yaw/roll and no rotationValue; cylindrical,
+    pin-slot and planar joints carry both an angle and slide values.
+    """
+    attrs = _class_assign("_JOINT_VALUE_ATTRIBUTES")
+    expected = {
+        "RevoluteJointMotion",
+        "SliderJointMotion",
+        "CylindricalJointMotion",
+        "PinSlotJointMotion",
+        "PlanarJointMotion",
+        "BallJointMotion",
+    }
+    assert set(attrs) == expected, (
+        f"driveable motion types changed: {sorted(set(attrs) ^ expected)}"
+    )
+
+    assert attrs["RevoluteJointMotion"] == {"rotation": "rotationValue"}
+    assert attrs["SliderJointMotion"] == {"slide": "slideValue"}
+    assert attrs["CylindricalJointMotion"]["rotation"] == "rotationValue"
+    assert attrs["CylindricalJointMotion"]["slide"] == "slideValue"
+    assert attrs["PinSlotJointMotion"]["slide"] == "slideValue"
+    assert attrs["PlanarJointMotion"]["secondary_slide"] == "secondarySlideValue"
+
+    assert attrs["BallJointMotion"] == {
+        "rotation": "pitchValue",
+        "pitch": "pitchValue",
+        "yaw": "yawValue",
+        "roll": "rollValue",
+    }
+    assert "rotationValue" not in attrs["BallJointMotion"].values(), (
+        "BallJointMotion has no rotationValue attribute"
+    )
+
+
+def test_joint_angle_attributes_hold_no_lengths():
+    """Only angle attributes may be converted between degrees and radians.
+
+    ``slideValue`` and the planar slides are lengths in Fusion's internal unit,
+    centimetres, so converting them is wrong by a factor of 180/pi.
+    """
+    angle_attrs = _class_assign("_JOINT_ANGLE_ATTRIBUTES")
+    assert "rotationValue" in angle_attrs
+    assert "pitchValue" in angle_attrs
+    assert "slideValue" not in angle_attrs
+    assert "primarySlideValue" not in angle_attrs
+    assert "secondarySlideValue" not in angle_attrs
+
+    attrs = _class_assign("_JOINT_VALUE_ATTRIBUTES")
+    mapped = {name for kinds in attrs.values() for name in kinds.values()}
+    assert set(angle_attrs) <= mapped, (
+        f"angle attributes that no motion maps to: {sorted(set(angle_attrs) - mapped)}"
+    )
+
+
+def test_set_joint_value_converts_degrees_only_inside_the_angle_branch():
+    """The radians conversion must be reachable only for angle attributes."""
+    node = _method("set_joint_value")
+
+    def references_angle_set(tree):
+        return any(
+            isinstance(sub, ast.Attribute) and sub.attr == "_JOINT_ANGLE_ATTRIBUTES"
+            for sub in ast.walk(tree)
+        )
+
+    angle_ifs = [
+        sub
+        for sub in ast.walk(node)
+        if isinstance(sub, ast.If) and references_angle_set(sub.test)
+    ]
+    assert angle_ifs, "set_joint_value must branch on _JOINT_ANGLE_ATTRIBUTES"
+
+    def radians_calls(tree):
+        return [
+            sub
+            for sub in ast.walk(tree)
+            if isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Attribute)
+            and sub.func.attr == "radians"
+        ]
+
+    assert len(radians_calls(node)) == 1, (
+        "more than one degrees->radians conversion suggests a length is being "
+        "converted too"
+    )
+    assert radians_calls(angle_ifs[0]), (
+        "the degrees->radians conversion must sit inside the angle branch"
+    )
+
+
+def test_as_built_joint_validates_the_face_it_cannot_use():
+    """``asBuiltJoints.createInput`` takes one geometry, so face_two is unused.
+
+    It is still required by the schema, so both faces must resolve.
+    """
+    node = _method("create_as_built_joint")
+    calls = [
+        sub
+        for sub in ast.walk(node)
+        if isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and sub.func.attr == "_joint_face"
+    ]
+    labels = [
+        call.args[3].value
+        for call in calls
+        if len(call.args) > 3 and isinstance(call.args[3], ast.Constant)
+    ]
+    assert labels == ["body_one", "body_two"], (
+        f"both faces must be resolved, got {labels}"
+    )

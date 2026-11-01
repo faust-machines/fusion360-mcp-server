@@ -353,6 +353,39 @@ def _add_joint(p: dict) -> dict:
     }
 
 
+# value_kind -> (motion, attribute, unit), mirroring what the add-in resolves
+# from the joint's motion type. The mock holds no design, so it resolves from the
+# kind instead; without this it reported rotationValue/degrees for every kind,
+# including the slide values that are lengths in centimetres.
+_MOCK_JOINT_VALUES: dict[str, tuple[str, str, str]] = {
+    "rotation": ("RevoluteJointMotion", "rotationValue", "deg"),
+    "slide": ("SliderJointMotion", "slideValue", "cm"),
+    "primary_slide": ("PlanarJointMotion", "primarySlideValue", "cm"),
+    "secondary_slide": ("PlanarJointMotion", "secondarySlideValue", "cm"),
+    "pitch": ("BallJointMotion", "pitchValue", "deg"),
+    "yaw": ("BallJointMotion", "yawValue", "deg"),
+    "roll": ("BallJointMotion", "rollValue", "deg"),
+}
+_MOCK_JOINT_DEFAULT = ("RevoluteJointMotion", "rotationValue", "deg")
+
+
+def _set_joint_value(p: dict) -> dict:
+    value_kind = p.get("value_kind")
+    motion, attribute, unit = _MOCK_JOINT_VALUES.get(
+        value_kind or "", _MOCK_JOINT_DEFAULT
+    )
+    return {
+        "joint_name": p.get("joint_name", "Joint_mock"),
+        "motion": motion,
+        "value_kind": value_kind,
+        "attribute": attribute,
+        "value": p.get("value", 0),
+        "units": unit if unit == "cm" else p.get("units", "deg"),
+        "read_back": p.get("value", 0),
+        "applied": True,
+    }
+
+
 def _list_components(_p: dict) -> dict:
     return {
         "components": [
@@ -1024,6 +1057,7 @@ _DISPATCH: dict[str, Any] = {
     "circular_pattern": _circular_pattern,
     "create_component": _create_component,
     "add_joint": _add_joint,
+    "set_joint_value": _set_joint_value,
     "list_components": _list_components,
     "export_step": _export_step,
     "export_f3d": _export_f3d,

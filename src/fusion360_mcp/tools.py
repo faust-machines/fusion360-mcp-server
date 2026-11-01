@@ -541,10 +541,19 @@ TOOLS: list[dict] = [
     {
         "name": "add_joint",
         "title": "Add Joint",
-        "description": "Add a joint between two components",
+        "description": (
+            "Add a joint between two components using a pair of faces as "
+            "joint geometry. face_one/face_two are mandatory: a joint cannot be "
+            "built from component origins, because a bare point carries no "
+            "component association. Pass a cylindrical face on each side "
+            "(see get_object_info for the face indices) - for a hinge that is "
+            "the knuckle bore on each leaf. NOTE: creating a joint MOVES the "
+            "components so the joint geometry becomes coincident - use "
+            "create_as_built_joint when the parts are already positioned."
+        ),
         "inputSchema": {
             "type": "object",
-            "required": ["component_one", "component_two"],
+            "required": ["component_one", "component_two", "face_one", "face_two"],
             "properties": {
                 "component_one": {"type": "string"},
                 "component_two": {"type": "string"},
@@ -560,6 +569,139 @@ TOOLS: list[dict] = [
                         "ball",
                     ],
                     "default": "rigid",
+                },
+                "body_one": {
+                    "type": "string",
+                    "description": (
+                        "Body inside component_one carrying the joint geometry. "
+                        "Omit when the component holds exactly one body."
+                    ),
+                },
+                "face_one": {
+                    "type": "integer",
+                    "description": (
+                        "Face index on that body (cylindrical faces work best)."
+                    ),
+                },
+                "body_two": {
+                    "type": "string",
+                    "description": (
+                        "Body inside component_two carrying the joint geometry. "
+                        "Omit when the component holds exactly one body."
+                    ),
+                },
+                "face_two": {
+                    "type": "integer",
+                    "description": (
+                        "Face index on that body (cylindrical faces work best)."
+                    ),
+                },
+                "axis": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "default": "x",
+                    "description": (
+                        "Rotation/slide axis for revolute, slider and cylindrical; "
+                        "primary direction for pin_slot, planar and ball."
+                    ),
+                },
+                "second_axis": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "description": (
+                        "Secondary direction for pin_slot and ball. "
+                        "Defaults to an axis perpendicular to `axis`. "
+                        "For ball joints Fusion takes (pitch, yaw) and "
+                        "rejects a pitch parallel to the joint axis, so "
+                        "the perpendicular one is sent first."
+                    ),
+                },
+                "quadrant": {
+                    "type": "string",
+                    "enum": ["start", "quarter", "middle", "third_quarter"],
+                    "default": "middle",
+                    "description": (
+                        "Angular position of the joint origin on a cylindrical face."
+                    ),
+                },
+                "key_point": {
+                    "type": "string",
+                    "enum": ["start", "middle", "center", "end"],
+                    "default": "end",
+                    "description": (
+                        "Axial position of the joint origin on a cylindrical face. "
+                        "`end` is the only value that produced a valid joint on "
+                        "Fusion 2705; others raise Invalid parameter height or "
+                        "InternalValidationError."
+                    ),
+                },
+            },
+        },
+    },
+    {
+        "name": "set_joint_value",
+        "title": "Set Joint Value",
+        "description": (
+            "Drive a joint to a value and confirm Fusion kept it. Angles are in "
+            "degrees unless units='rad'; slide values are lengths in cm and are "
+            "never converted. Works on as-built joints unless as_built=False. "
+            "Fusion resets joint values to zero on the next design.computeAll(), "
+            "so avoid recomputing after this call - the command itself does not."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["value"],
+            "properties": {
+                "value": {
+                    "type": "number",
+                    "description": (
+                        "Target value: degrees for rotations (or radians with "
+                        "units='rad'), centimetres for slide values."
+                    ),
+                },
+                "joint_name": {
+                    "type": "string",
+                    "description": "Joint to drive. Omit to use joint_index.",
+                },
+                "joint_index": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": (
+                        "Index into the joint collection when joint_name is omitted."
+                    ),
+                },
+                "units": {
+                    "type": "string",
+                    "enum": ["deg", "rad"],
+                    "default": "deg",
+                    "description": (
+                        "Units for angle values only; slide values are always cm."
+                    ),
+                },
+                "value_kind": {
+                    "type": "string",
+                    "enum": [
+                        "rotation",
+                        "slide",
+                        "primary_slide",
+                        "secondary_slide",
+                        "pitch",
+                        "yaw",
+                        "roll",
+                    ],
+                    "description": (
+                        "Which value to drive on joints carrying more than one. "
+                        "Defaults to rotation (pitch for ball joints). Use "
+                        "primary_slide/secondary_slide for planar and "
+                        "pitch/yaw/roll for ball."
+                    ),
+                },
+                "as_built": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Search as-built joints (True) or regular joints (False)."
+                    ),
                 },
             },
         },
@@ -1597,8 +1739,12 @@ TOOLS: list[dict] = [
         "name": "create_as_built_joint",
         "title": "Create As-Built Joint",
         "description": (
-            "Create a joint from components' current positions "
-            "(easier than geometric joints)"
+            "Create a joint that keeps both components exactly where they are, "
+            "capturing the current pose instead of enforcing a new one. Use this "
+            "when the parts are already positioned correctly; add_joint instead "
+            "moves components to make the joint geometry coincident. "
+            "Fusion needs a face pair (face_one/face_two) for every joint type "
+            "except rigid."
         ),
         "inputSchema": {
             "type": "object",
@@ -1622,6 +1768,68 @@ TOOLS: list[dict] = [
                         "ball",
                     ],
                     "default": "rigid",
+                },
+                "body_one": {
+                    "type": "string",
+                    "description": (
+                        "Body inside component_one carrying the joint geometry. "
+                        "Omit when the component holds exactly one body."
+                    ),
+                },
+                "face_one": {
+                    "type": "integer",
+                    "description": (
+                        "Face index on that body (cylindrical faces work best)."
+                    ),
+                },
+                "body_two": {
+                    "type": "string",
+                    "description": (
+                        "Body inside component_two carrying the joint geometry. "
+                        "Omit when the component holds exactly one body."
+                    ),
+                },
+                "face_two": {
+                    "type": "integer",
+                    "description": (
+                        "Face index on that body (cylindrical faces work best)."
+                    ),
+                },
+                "axis": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "default": "x",
+                    "description": (
+                        "Rotation/slide axis for revolute, slider and cylindrical; "
+                        "primary direction for pin_slot, planar and ball."
+                    ),
+                },
+                "second_axis": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "description": (
+                        "Secondary direction for pin_slot and ball. "
+                        "Defaults to an axis perpendicular to `axis`. "
+                        "For ball joints Fusion takes (pitch, yaw) and "
+                        "rejects a pitch parallel to the joint axis, so "
+                        "the perpendicular one is sent first."
+                    ),
+                },
+                "quadrant": {
+                    "type": "string",
+                    "enum": ["start", "quarter", "middle", "third_quarter"],
+                    "default": "middle",
+                    "description": (
+                        "Angular position of the joint origin on a cylindrical face."
+                    ),
+                },
+                "key_point": {
+                    "type": "string",
+                    "enum": ["start", "middle", "center", "end"],
+                    "default": "end",
+                    "description": (
+                        "Axial position of the joint origin on a cylindrical face."
+                    ),
                 },
             },
         },

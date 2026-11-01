@@ -181,6 +181,7 @@ class CommandHandler:
                 # assembly
                 "create_component": self.create_component,
                 "add_joint": self.add_joint,
+                "set_joint_value": self.set_joint_value,
                 "create_as_built_joint": self.create_as_built_joint,
                 "create_rigid_group": self.create_rigid_group,
                 # inspection / analysis
@@ -298,6 +299,45 @@ class CommandHandler:
         if d is None or not hasattr(d, "rootComponent"):
             raise RuntimeError("No active design")
         return d
+
+    # joint_type -> (JointInput setter, number of direction arguments it takes).
+    # The arities were verified against the running Fusion API: one direction for
+    # revolute/slider/cylindrical/planar, two for pin_slot and ball, none for rigid.
+    _JOINT_MOTION_SETTERS = {
+        "rigid": ("setAsRigidJointMotion", 0),
+        "revolute": ("setAsRevoluteJointMotion", 1),
+        "slider": ("setAsSliderJointMotion", 1),
+        "cylindrical": ("setAsCylindricalJointMotion", 1),
+        "pin_slot": ("setAsPinSlotJointMotion", 2),
+        "planar": ("setAsPlanarJointMotion", 1),
+        "ball": ("setAsBallJointMotion", 2),
+    }
+
+    _JOINT_AXES = {
+        "x": "XAxisJointDirection",
+        "y": "YAxisJointDirection",
+        "z": "ZAxisJointDirection",
+    }
+
+    _JOINT_QUADRANTS = {
+        "start": "StartJointQuadrantAngleType",
+        "quarter": "QuarterJointQuadrantAngleType",
+        "middle": "MiddleJointQuadrantAngleType",
+        "third_quarter": "ThirdQuarterJointQuadrantAngleType",
+    }
+
+    _JOINT_KEY_POINTS = {
+        "start": "StartKeyPoint",
+        "middle": "MiddleKeyPoint",
+        "center": "CenterKeyPoint",
+        "end": "EndKeyPoint",
+    }
+
+    # Joint types whose two direction arguments are (something, primary) rather
+    # than (primary, something). Fusion's ball joint takes
+    # (pitchDirection, yawDirection) and rejects a pitch parallel to the joint
+    # axis with "Invalid parameter pitchDirection".
+    _JOINT_REVERSED_DIRECTION_ARGUMENTS = frozenset({"ball"})
 
     def _root(self):
         return self._design().rootComponent
@@ -2476,67 +2516,408 @@ class CommandHandler:
         occ.component.name = name
         return {"created": True, "name": name}
 
+    def _occurrence_by_component(self, name: str):
+        for occ in self._root().allOccurrences:
+            if occ.component.name == name:
+                return occ
+        return None
+
+    def _joint_face(self, occ, body_name: str, face_index: int, label: str):
+        """Resolve one cylindrical face used as joint geometry."""
+        component = occ.component
+        bodies = [b for b in component.bRepBodies]
+        if body_name:
+            bodies = [b for b in bodies if b.name == body_name]
+            if not bodies:
+                raise RuntimeError(
+                    f"Body '{body_name}' not found in component '{component.name}'"
+                )
+        elif len(bodies) != 1:
+            raise RuntimeError(
+                f"Component '{component.name}' has {len(bodies)} bodies; "
+                f"pass '{label}' to choose which body carries the joint geometry"
+            )
+
+        body = bodies[0]
+        if face_index is None or not (0 <= face_index < body.faces.count):
+            raise RuntimeError(
+                f"Face index {face_index} is out of range for body '{body.name}' "
+                f"({body.faces.count} faces). Enumerate them with get_object_info "
+                f"and pick a cylindrical face."
+            )
+        return body.faces.item(face_index)
+
     def add_joint(
-        self, component_one: str, component_two: str, joint_type: str = "rigid"
+        self,
+        component_one: str,
+        component_two: str,
+        joint_type: str = "rigid",
+        body_one: str = None,
+        face_one: int = None,
+        body_two: str = None,
+        face_two: int = None,
+        axis: str = "x",
+        second_axis: str = None,
+        quadrant: str = "middle",
+        key_point: str = "end",
     ):
+        """Create a joint between two components from a pair of faces.
+
+        Geometry is mandatory. A joint cannot be built from the components'
+        origin points: ``JointGeometry.createByPoint`` rejects them with
+        ``Invalid parameter point`` because a bare point carries no component
+        association, so ``joints.add`` has nothing to bind.
+        """
         root = self._root()
+        joints = root.joints
 
-        occ1 = occ2 = None
-        for occ in root.allOccurrences:
-            if occ.component.name == component_one:
-                occ1 = occ
-            if occ.component.name == component_two:
-                occ2 = occ
+        if joint_type not in self._JOINT_MOTION_SETTERS:
+            raise RuntimeError(
+                f"Unknown joint type: {joint_type}. "
+                f"Use one of {sorted(self._JOINT_MOTION_SETTERS)}"
+            )
 
+        occ1 = self._occurrence_by_component(component_one)
+        occ2 = self._occurrence_by_component(component_two)
         if not occ1 or not occ2:
             raise RuntimeError("One or both components not found")
+        if occ1 == occ2:
+            raise RuntimeError("component_one and component_two must differ")
 
-        joints = root.joints
-        joint_types = {
-            "rigid": adsk.fusion.JointTypes.RigidJointType,
-            "revolute": adsk.fusion.JointTypes.RevoluteJointType,
-            "slider": adsk.fusion.JointTypes.SliderJointType,
-            "cylindrical": adsk.fusion.JointTypes.CylindricalJointType,
-            "pin_slot": adsk.fusion.JointTypes.PinSlotJointType,
-            "planar": adsk.fusion.JointTypes.PlanarJointType,
-            "ball": adsk.fusion.JointTypes.BallJointType,
+        if face_one is None or face_two is None:
+            raise RuntimeError(
+                "add_joint needs joint geometry: pass face_one/face_two "
+                "(and body_one/body_two when a component holds more than one body). "
+                "Component origin points are not valid joint geometry."
+            )
+
+        faces = (
+            self._joint_face(occ1, body_one, face_one, "body_one"),
+            self._joint_face(occ2, body_two, face_two, "body_two"),
+        )
+
+        quadrant_attr = self._JOINT_QUADRANTS.get(quadrant)
+        if quadrant_attr is None:
+            raise RuntimeError(
+                f"Unknown quadrant: {quadrant}. Use one of {sorted(self._JOINT_QUADRANTS)}"
+            )
+        key_point_attr = self._JOINT_KEY_POINTS.get(key_point)
+        if key_point_attr is None:
+            raise RuntimeError(
+                f"Unknown key_point: {key_point}. Use one of {sorted(self._JOINT_KEY_POINTS)}"
+            )
+        quadrant_value = getattr(adsk.fusion.JointQuadrantAngleTypes, quadrant_attr)
+        key_point_value = getattr(adsk.fusion.JointKeyPointTypes, key_point_attr)
+
+        geometries = [
+            adsk.fusion.JointGeometry.createByCylinderOrConeFace(
+                face, quadrant_value, key_point_value
+            )
+            for face in faces
+        ]
+
+        before = {
+            occ.name: (
+                occ.transform.translation.x,
+                occ.transform.translation.y,
+                occ.transform.translation.z,
+            )
+            for occ in (occ1, occ2)
         }
 
-        jt = joint_types.get(joint_type)
-        if jt is None:
-            raise RuntimeError(f"Unknown joint type: {joint_type}")
+        inp = joints.createInput(geometries[0], geometries[1])
 
-        # Create joint geometry from origin points
-        origin1 = occ1.component.originConstructionPoint
-        origin2 = occ2.component.originConstructionPoint
-        geo1 = adsk.fusion.JointGeometry.createByPoint(occ1, origin1)
-        geo2 = adsk.fusion.JointGeometry.createByPoint(occ2, origin2)
+        # Set the requested motion explicitly. Previously only "rigid" was
+        # handled, so every other type silently produced an inferred (usually
+        # rigid) joint while reporting success.
+        self._apply_joint_motion(inp, joint_type, axis, second_axis)
 
-        inp = joints.createInput(geo1, geo2)
-        if joint_type == "rigid":
-            inp.setAsRigidJointMotion()
-        joints.add(inp)
-        return {"created": True, "joint_type": joint_type}
+        joint = joints.add(inp)
+        self._design().computeAll()
+
+        # A Fusion joint *moves* components so the two joint origins become
+        # coincident. That silently rearranges the design when the caller only
+        # wanted a constraint, so report the displacement instead of hiding it.
+        moved = {}
+        for occ in (occ1, occ2):
+            delta = [
+                round(occ.transform.translation.x - before[occ.name][0], 6),
+                round(occ.transform.translation.y - before[occ.name][1], 6),
+                round(occ.transform.translation.z - before[occ.name][2], 6),
+            ]
+            if any(abs(v) > 1e-6 for v in delta):
+                moved[occ.name] = delta
+
+        return {
+            "created": True,
+            "joint_name": joint.name,
+            "joint_type": joint_type,
+            "motion": joint.jointMotion.objectType.split("::")[-1],
+            "snapped": bool(moved),
+            "moved_components": moved,
+        }
+
+    def _apply_joint_motion(self, inp, joint_type: str, axis: str, second_axis: str):
+        """Set the JointInput motion for *joint_type*.
+
+        Arity and argument order were verified against Fusion 2705:
+
+        * rigid                    -> no direction arguments
+        * revolute/slider/cylindrical/planar -> one JointDirections
+        * pin_slot                 -> (slideDirection, rotationDirection)
+        * ball                     -> (pitchDirection, yawDirection); Fusion
+          rejects a pitch that is parallel to the joint axis
+          (`Invalid parameter pitchDirection`), so the perpendicular axis is
+          passed first regardless of which one the caller named as `axis`.
+        """
+        setter_name, direction_count = self._JOINT_MOTION_SETTERS[joint_type]
+        setter = getattr(inp, setter_name)
+
+        if not direction_count:
+            setter()
+            return
+
+        primary = self._joint_direction(axis)
+        if direction_count == 1:
+            setter(primary)
+            return
+
+        secondary = self._joint_direction(second_axis or self._perpendicular(axis))
+        if joint_type in self._JOINT_REVERSED_DIRECTION_ARGUMENTS:
+            setter(secondary, primary)
+        else:
+            setter(primary, secondary)
+
+    def _joint_direction(self, axis: str):
+        attr = self._JOINT_AXES.get((axis or "").lower())
+        if attr is None:
+            raise RuntimeError(
+                f"Unknown axis: {axis}. Use one of {sorted(self._JOINT_AXES)}"
+            )
+        return getattr(adsk.fusion.JointDirections, attr)
+
+    @staticmethod
+    def _perpendicular(axis: str) -> str:
+        return "z" if (axis or "x").lower() != "z" else "x"
 
     def create_as_built_joint(
-        self, component_one: str, component_two: str, joint_type: str = "rigid"
+        self,
+        component_one: str,
+        component_two: str,
+        joint_type: str = "rigid",
+        body_one: str = None,
+        face_one: int = None,
+        body_two: str = None,
+        face_two: int = None,
+        axis: str = "x",
+        second_axis: str = None,
+        quadrant: str = "middle",
+        key_point: str = "end",
     ):
+        """Create a joint that keeps the components where they are.
+
+        Unlike ``add_joint``, this does not move anything: an as-built joint
+        records the current pose instead of enforcing a new one, which is what
+        you want when the parts are already positioned correctly (for example
+        the two halves of a hinge lined up in a design).
+
+        Fusion refuses a non-rigid as-built joint without geometry
+        (``Geometry should not be null if joint motion is not rigid``), so a
+        face pair is required for every joint_type except ``rigid``.
+        """
         root = self._root()
 
-        occ1 = occ2 = None
-        for occ in root.allOccurrences:
-            if occ.component.name == component_one:
-                occ1 = occ
-            if occ.component.name == component_two:
-                occ2 = occ
+        if joint_type not in self._JOINT_MOTION_SETTERS:
+            raise RuntimeError(
+                f"Unknown joint type: {joint_type}. "
+                f"Use one of {sorted(self._JOINT_MOTION_SETTERS)}"
+            )
 
+        occ1 = self._occurrence_by_component(component_one)
+        occ2 = self._occurrence_by_component(component_two)
         if not occ1 or not occ2:
             raise RuntimeError("One or both components not found")
+        if occ1 == occ2:
+            raise RuntimeError("component_one and component_two must differ")
+
+        geometry = None
+        if joint_type != "rigid":
+            if face_one is None or face_two is None:
+                raise RuntimeError(
+                    f"A {joint_type} as-built joint needs geometry: pass "
+                    "face_one/face_two (and body_one/body_two when a component "
+                    "holds more than one body). Only 'rigid' works without it."
+                )
+            face = self._joint_face(occ1, body_one, face_one, "body_one")
+
+            # ``asBuiltJoints.createInput`` takes a single geometry, so face_two
+            # cannot be used to build the joint. It is still resolved, so an
+            # unresolvable body_two/face_two is reported rather than ignored.
+            self._joint_face(occ2, body_two, face_two, "body_two")
+            quadrant_attr = self._JOINT_QUADRANTS.get(quadrant)
+            key_point_attr = self._JOINT_KEY_POINTS.get(key_point)
+            if quadrant_attr is None or key_point_attr is None:
+                raise RuntimeError(
+                    f"Unknown quadrant/key_point: {quadrant}/{key_point}"
+                )
+            geometry = adsk.fusion.JointGeometry.createByCylinderOrConeFace(
+                face,
+                getattr(adsk.fusion.JointQuadrantAngleTypes, quadrant_attr),
+                getattr(adsk.fusion.JointKeyPointTypes, key_point_attr),
+            )
 
         as_built = root.asBuiltJoints
-        inp = as_built.createInput(occ1, occ2, None)
-        as_built.add(inp)
-        return {"created": True, "joint_type": joint_type}
+        inp = as_built.createInput(occ1, occ2, geometry)
+
+        # Honour joint_type; previously every request produced a rigid joint
+        # because no motion was ever set.
+        self._apply_joint_motion(inp, joint_type, axis, second_axis)
+
+        joint = as_built.add(inp)
+        return {
+            "created": True,
+            "joint_name": joint.name,
+            "joint_type": joint_type,
+            "motion": joint.jointMotion.objectType.split("::")[-1],
+            "kept_current_positions": True,
+        }
+
+    # JointMotion attribute that carries the driveable value, by motion type,
+    # with the value_kind names that select it. BallJointMotion exposes
+    # pitchValue/yawValue/rollValue and no rotationValue; cylindrical, pin-slot
+    # and planar joints carry both an angle and slide values.
+    _JOINT_VALUE_ATTRIBUTES = {
+        "RevoluteJointMotion": {"rotation": "rotationValue"},
+        "SliderJointMotion": {"slide": "slideValue"},
+        "CylindricalJointMotion": {
+            "rotation": "rotationValue",
+            "slide": "slideValue",
+        },
+        "PinSlotJointMotion": {
+            "rotation": "rotationValue",
+            "slide": "slideValue",
+        },
+        "PlanarJointMotion": {
+            "rotation": "rotationValue",
+            "slide": "primarySlideValue",
+            "primary_slide": "primarySlideValue",
+            "secondary_slide": "secondarySlideValue",
+        },
+        "BallJointMotion": {
+            "rotation": "pitchValue",
+            "pitch": "pitchValue",
+            "yaw": "yawValue",
+            "roll": "rollValue",
+        },
+    }
+
+    # Attributes stored as an angle, so ``units`` applies to them. Everything
+    # else is a length in Fusion's internal unit, cm, and passes through.
+    _JOINT_ANGLE_ATTRIBUTES = frozenset(
+        {"rotationValue", "pitchValue", "yawValue", "rollValue"}
+    )
+
+    def set_joint_value(
+        self,
+        value: float,
+        joint_name: str = None,
+        joint_index: int = 0,
+        units: str = "deg",
+        value_kind: str = None,
+        as_built: bool = True,
+    ):
+        """Drive a joint to *value* and confirm Fusion kept it.
+
+        Fusion resets a joint value to zero the next time ``design.computeAll()``
+        runs, which makes a naive set-then-recompute look like the API silently
+        ignored the assignment.  This method therefore never recomputes: it sets
+        the value, refreshes the viewport, reads the value back and raises if it
+        did not stick.
+
+        ``units`` is ``deg`` (default) or ``rad`` and applies to angle values
+        only; slide values are centimetres.  ``value_kind`` selects the
+        attribute: ``rotation`` or ``slide`` on cylindrical and pin-slot,
+        ``primary_slide``/``secondary_slide`` on planar, and
+        ``pitch``/``yaw``/``roll`` on ball joints.
+        """
+        root = self._root()
+        collection = root.asBuiltJoints if as_built else root.joints
+
+        joint = None
+        if joint_name:
+            for i in range(collection.count):
+                candidate = collection.item(i)
+                if candidate.name == joint_name:
+                    joint = candidate
+                    break
+            if joint is None:
+                kind = "as-built " if as_built else ""
+                raise RuntimeError(
+                    f"{kind}joint '{joint_name}' not found "
+                    f"({collection.count} {kind}joints in the design)"
+                )
+        else:
+            if collection.count == 0:
+                raise RuntimeError(
+                    "No as-built joints in the design; pass as_built=False for "
+                    "regular joints or create one first"
+                )
+            joint = collection.item(joint_index)
+
+        motion = joint.jointMotion
+        motion_kind = motion.objectType.split("::")[-1]
+        if motion_kind == "RigidJointMotion":
+            raise RuntimeError(
+                f"'{joint.name}' is a rigid joint; it has no value to drive"
+            )
+
+        kinds = self._JOINT_VALUE_ATTRIBUTES.get(motion_kind)
+        if kinds is None:
+            raise RuntimeError(
+                f"'{joint.name}' has motion {motion_kind}, which this command "
+                f"cannot drive; known types: "
+                f"{sorted(self._JOINT_VALUE_ATTRIBUTES)}"
+            )
+
+        if value_kind:
+            attribute = kinds.get(value_kind)
+            if attribute is None:
+                raise RuntimeError(
+                    f"value_kind '{value_kind}' does not apply to {motion_kind}; "
+                    f"use one of {sorted(kinds)}"
+                )
+        else:
+            attribute = kinds.get("rotation") or next(iter(kinds.values()))
+
+        if attribute in self._JOINT_ANGLE_ATTRIBUTES:
+            target = value if units == "rad" else math.radians(value)
+            value_units = units
+        else:
+            target = value
+            value_units = "cm"
+
+        setattr(motion, attribute, target)
+        self.app.activeViewport.refresh()
+
+        read_back = getattr(joint.jointMotion, attribute)
+        if abs(read_back - target) > 1e-6:
+            raise RuntimeError(
+                f"Fusion did not keep the requested value on '{joint.name}' "
+                f"(set {target:.6f} {value_units}, read back "
+                f"{read_back:.6f}). A design.computeAll() after setting a joint "
+                f"value resets it to zero."
+            )
+
+        return {
+            "joint_name": joint.name,
+            "motion": motion_kind,
+            "value_kind": value_kind,
+            "attribute": attribute,
+            "value": round(value, 6),
+            "units": value_units,
+            "read_back": round(read_back, 9),
+            "applied": True,
+        }
 
     def create_rigid_group(self, component_names: list, include_children: bool = True):
         root = self._root()

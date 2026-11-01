@@ -299,6 +299,39 @@ class CommandHandler:
             raise RuntimeError("No active design")
         return d
 
+    # joint_type -> (JointInput setter, number of direction arguments it takes).
+    # The arities were verified against the running Fusion API: one direction for
+    # revolute/slider/cylindrical/planar, two for pin_slot and ball, none for rigid.
+    _JOINT_MOTION_SETTERS = {
+        "rigid": ("setAsRigidJointMotion", 0),
+        "revolute": ("setAsRevoluteJointMotion", 1),
+        "slider": ("setAsSliderJointMotion", 1),
+        "cylindrical": ("setAsCylindricalJointMotion", 1),
+        "pin_slot": ("setAsPinSlotJointMotion", 2),
+        "planar": ("setAsPlanarJointMotion", 1),
+        "ball": ("setAsBallJointMotion", 2),
+    }
+
+    _JOINT_AXES = {
+        "x": "XAxisJointDirection",
+        "y": "YAxisJointDirection",
+        "z": "ZAxisJointDirection",
+    }
+
+    _JOINT_QUADRANTS = {
+        "start": "StartJointQuadrantAngleType",
+        "quarter": "QuarterJointQuadrantAngleType",
+        "middle": "MiddleJointQuadrantAngleType",
+        "third_quarter": "ThirdQuarterJointQuadrantAngleType",
+    }
+
+    _JOINT_KEY_POINTS = {
+        "start": "StartKeyPoint",
+        "middle": "MiddleKeyPoint",
+        "center": "CenterKeyPoint",
+        "end": "EndKeyPoint",
+    }
+
     def _root(self):
         return self._design().rootComponent
 
@@ -2476,47 +2509,142 @@ class CommandHandler:
         occ.component.name = name
         return {"created": True, "name": name}
 
+    def _occurrence_by_component(self, name: str):
+        for occ in self._root().allOccurrences:
+            if occ.component.name == name:
+                return occ
+        return None
+
+    def _joint_face(self, occ, body_name: str, face_index: int, label: str):
+        """Resolve one cylindrical face used as joint geometry."""
+        component = occ.component
+        bodies = [b for b in component.bRepBodies]
+        if body_name:
+            bodies = [b for b in bodies if b.name == body_name]
+            if not bodies:
+                raise RuntimeError(
+                    f"Body '{body_name}' not found in component '{component.name}'"
+                )
+        elif len(bodies) != 1:
+            raise RuntimeError(
+                f"Component '{component.name}' has {len(bodies)} bodies; "
+                f"pass '{label}' to choose which body carries the joint geometry"
+            )
+
+        body = bodies[0]
+        if face_index is None or not (0 <= face_index < body.faces.count):
+            raise RuntimeError(
+                f"Face index {face_index} is out of range for body '{body.name}' "
+                f"({body.faces.count} faces). Enumerate them with get_object_info "
+                f"and pick a cylindrical face."
+            )
+        return body.faces.item(face_index)
+
     def add_joint(
-        self, component_one: str, component_two: str, joint_type: str = "rigid"
+        self,
+        component_one: str,
+        component_two: str,
+        joint_type: str = "rigid",
+        body_one: str = None,
+        face_one: int = None,
+        body_two: str = None,
+        face_two: int = None,
+        axis: str = "x",
+        second_axis: str = None,
+        quadrant: str = "middle",
+        key_point: str = "end",
     ):
+        """Create a joint between two components from a pair of faces.
+
+        Geometry is mandatory. A joint cannot be built from the components'
+        origin points: ``JointGeometry.createByPoint`` rejects them with
+        ``Invalid parameter point`` because a bare point carries no component
+        association, so ``joints.add`` has nothing to bind.
+        """
         root = self._root()
+        joints = root.joints
 
-        occ1 = occ2 = None
-        for occ in root.allOccurrences:
-            if occ.component.name == component_one:
-                occ1 = occ
-            if occ.component.name == component_two:
-                occ2 = occ
+        motion = self._JOINT_MOTION_SETTERS.get(joint_type)
+        if motion is None:
+            raise RuntimeError(
+                f"Unknown joint type: {joint_type}. "
+                f"Use one of {sorted(self._JOINT_MOTION_SETTERS)}"
+            )
+        setter_name, direction_count = motion
 
+        occ1 = self._occurrence_by_component(component_one)
+        occ2 = self._occurrence_by_component(component_two)
         if not occ1 or not occ2:
             raise RuntimeError("One or both components not found")
+        if occ1 == occ2:
+            raise RuntimeError("component_one and component_two must differ")
 
-        joints = root.joints
-        joint_types = {
-            "rigid": adsk.fusion.JointTypes.RigidJointType,
-            "revolute": adsk.fusion.JointTypes.RevoluteJointType,
-            "slider": adsk.fusion.JointTypes.SliderJointType,
-            "cylindrical": adsk.fusion.JointTypes.CylindricalJointType,
-            "pin_slot": adsk.fusion.JointTypes.PinSlotJointType,
-            "planar": adsk.fusion.JointTypes.PlanarJointType,
-            "ball": adsk.fusion.JointTypes.BallJointType,
+        if face_one is None or face_two is None:
+            raise RuntimeError(
+                "add_joint needs joint geometry: pass face_one/face_two "
+                "(and body_one/body_two when a component holds more than one body). "
+                "Component origin points are not valid joint geometry."
+            )
+
+        faces = (
+            self._joint_face(occ1, body_one, face_one, "body_one"),
+            self._joint_face(occ2, body_two, face_two, "body_two"),
+        )
+
+        quadrant_attr = self._JOINT_QUADRANTS.get(quadrant)
+        if quadrant_attr is None:
+            raise RuntimeError(
+                f"Unknown quadrant: {quadrant}. Use one of {sorted(self._JOINT_QUADRANTS)}"
+            )
+        key_point_attr = self._JOINT_KEY_POINTS.get(key_point)
+        if key_point_attr is None:
+            raise RuntimeError(
+                f"Unknown key_point: {key_point}. Use one of {sorted(self._JOINT_KEY_POINTS)}"
+            )
+        quadrant_value = getattr(adsk.fusion.JointQuadrantAngleTypes, quadrant_attr)
+        key_point_value = getattr(adsk.fusion.JointKeyPointTypes, key_point_attr)
+
+        geometries = [
+            adsk.fusion.JointGeometry.createByCylinderOrConeFace(
+                face, quadrant_value, key_point_value
+            )
+            for face in faces
+        ]
+
+        inp = joints.createInput(geometries[0], geometries[1])
+
+        # Set the requested motion explicitly. Previously only "rigid" was
+        # handled, so every other type silently produced an inferred (usually
+        # rigid) joint while reporting success.
+        setter = getattr(inp, setter_name)
+        if direction_count:
+            primary = self._joint_direction(axis)
+            if direction_count == 1:
+                setter(primary)
+            else:
+                setter(primary, self._joint_direction(second_axis or self._perpendicular(axis)))
+        else:
+            setter()
+
+        joint = joints.add(inp)
+        return {
+            "created": True,
+            "joint_name": joint.name,
+            "joint_type": joint_type,
+            "motion": joint.jointMotion.objectType.split("::")[-1],
         }
 
-        jt = joint_types.get(joint_type)
-        if jt is None:
-            raise RuntimeError(f"Unknown joint type: {joint_type}")
+    def _joint_direction(self, axis: str):
+        attr = self._JOINT_AXES.get((axis or "").lower())
+        if attr is None:
+            raise RuntimeError(
+                f"Unknown axis: {axis}. Use one of {sorted(self._JOINT_AXES)}"
+            )
+        return getattr(adsk.fusion.JointDirections, attr)
 
-        # Create joint geometry from origin points
-        origin1 = occ1.component.originConstructionPoint
-        origin2 = occ2.component.originConstructionPoint
-        geo1 = adsk.fusion.JointGeometry.createByPoint(occ1, origin1)
-        geo2 = adsk.fusion.JointGeometry.createByPoint(occ2, origin2)
-
-        inp = joints.createInput(geo1, geo2)
-        if joint_type == "rigid":
-            inp.setAsRigidJointMotion()
-        joints.add(inp)
-        return {"created": True, "joint_type": joint_type}
+    @staticmethod
+    def _perpendicular(axis: str) -> str:
+        return "z" if (axis or "x").lower() != "z" else "x"
 
     def create_as_built_joint(
         self, component_one: str, component_two: str, joint_type: str = "rigid"

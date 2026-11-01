@@ -541,10 +541,17 @@ TOOLS: list[dict] = [
     {
         "name": "add_joint",
         "title": "Add Joint",
-        "description": "Add a joint between two components",
+        "description": (
+            "Add a joint between two components using a pair of faces as "
+            "joint geometry. face_one/face_two are mandatory: a joint cannot be "
+            "built from component origins, because a bare point carries no "
+            "component association. Pass a cylindrical face on each side "
+            "(see get_object_info for the face indices) - for a hinge that is "
+            "the knuckle bore on each leaf."
+        ),
         "inputSchema": {
             "type": "object",
-            "required": ["component_one", "component_two"],
+            "required": ["component_one", "component_two", "face_one", "face_two"],
             "properties": {
                 "component_one": {"type": "string"},
                 "component_two": {"type": "string"},
@@ -560,6 +567,68 @@ TOOLS: list[dict] = [
                         "ball",
                     ],
                     "default": "rigid",
+                },
+                "body_one": {
+                    "type": "string",
+                    "description": (
+                        "Body inside component_one carrying the joint geometry. "
+                        "Omit when the component holds exactly one body."
+                    ),
+                },
+                "face_one": {
+                    "type": "integer",
+                    "description": (
+                        "Face index on that body (cylindrical faces work best)."
+                    ),
+                },
+                "body_two": {
+                    "type": "string",
+                    "description": (
+                        "Body inside component_two carrying the joint geometry. "
+                        "Omit when the component holds exactly one body."
+                    ),
+                },
+                "face_two": {
+                    "type": "integer",
+                    "description": (
+                        "Face index on that body (cylindrical faces work best)."
+                    ),
+                },
+                "axis": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "default": "x",
+                    "description": (
+                        "Rotation/slide axis for revolute, slider and cylindrical; "
+                        "primary direction for pin_slot, planar and ball."
+                    ),
+                },
+                "second_axis": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "description": (
+                        "Secondary direction for pin_slot and ball. "
+                        "Defaults to an axis perpendicular to `axis`."
+                    ),
+                },
+                "quadrant": {
+                    "type": "string",
+                    "enum": ["start", "quarter", "middle", "third_quarter"],
+                    "default": "middle",
+                    "description": (
+                        "Angular position of the joint origin on a cylindrical face."
+                    ),
+                },
+                "key_point": {
+                    "type": "string",
+                    "enum": ["start", "middle", "center", "end"],
+                    "default": "end",
+                    "description": (
+                        "Axial position of the joint origin on a cylindrical face. "
+                        "`end` is the only value that produced a valid joint on "
+                        "Fusion 2705; others raise Invalid parameter height or "
+                        "InternalValidationError."
+                    ),
                 },
             },
         },

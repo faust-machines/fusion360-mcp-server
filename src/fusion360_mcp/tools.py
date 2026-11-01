@@ -610,7 +610,10 @@ TOOLS: list[dict] = [
                     "enum": ["x", "y", "z"],
                     "description": (
                         "Secondary direction for pin_slot and ball. "
-                        "Defaults to an axis perpendicular to `axis`."
+                        "Defaults to an axis perpendicular to `axis`. "
+                        "For ball joints Fusion takes (pitch, yaw) and "
+                        "rejects a pitch parallel to the joint axis, so "
+                        "the perpendicular one is sent first."
                     ),
                 },
                 "quadrant": {
@@ -1738,7 +1741,10 @@ TOOLS: list[dict] = [
                     "enum": ["x", "y", "z"],
                     "description": (
                         "Secondary direction for pin_slot and ball. "
-                        "Defaults to an axis perpendicular to `axis`."
+                        "Defaults to an axis perpendicular to `axis`. "
+                        "For ball joints Fusion takes (pitch, yaw) and "
+                        "rejects a pitch parallel to the joint axis, so "
+                        "the perpendicular one is sent first."
                     ),
                 },
                 "quadrant": {

@@ -332,6 +332,12 @@ class CommandHandler:
         "end": "EndKeyPoint",
     }
 
+    # Joint types whose two direction arguments are (something, primary) rather
+    # than (primary, something). Fusion's ball joint takes
+    # (pitchDirection, yawDirection) and rejects a pitch parallel to the joint
+    # axis with "Invalid parameter pitchDirection".
+    _JOINT_REVERSED_DIRECTION_ARGUMENTS = frozenset({"ball"})
+
     def _root(self):
         return self._design().rootComponent
 
@@ -2564,13 +2570,11 @@ class CommandHandler:
         root = self._root()
         joints = root.joints
 
-        motion = self._JOINT_MOTION_SETTERS.get(joint_type)
-        if motion is None:
+        if joint_type not in self._JOINT_MOTION_SETTERS:
             raise RuntimeError(
                 f"Unknown joint type: {joint_type}. "
                 f"Use one of {sorted(self._JOINT_MOTION_SETTERS)}"
             )
-        setter_name, direction_count = motion
 
         occ1 = self._occurrence_by_component(component_one)
         occ2 = self._occurrence_by_component(component_two)
@@ -2625,15 +2629,7 @@ class CommandHandler:
         # Set the requested motion explicitly. Previously only "rigid" was
         # handled, so every other type silently produced an inferred (usually
         # rigid) joint while reporting success.
-        setter = getattr(inp, setter_name)
-        if direction_count:
-            primary = self._joint_direction(axis)
-            if direction_count == 1:
-                setter(primary)
-            else:
-                setter(primary, self._joint_direction(second_axis or self._perpendicular(axis)))
-        else:
-            setter()
+        self._apply_joint_motion(inp, joint_type, axis, second_axis)
 
         joint = joints.add(inp)
         self._design().computeAll()
@@ -2659,6 +2655,37 @@ class CommandHandler:
             "snapped": bool(moved),
             "moved_components": moved,
         }
+
+    def _apply_joint_motion(self, inp, joint_type: str, axis: str, second_axis: str):
+        """Set the JointInput motion for *joint_type*.
+
+        Arity and argument order were verified against Fusion 2705:
+
+        * rigid                    -> no direction arguments
+        * revolute/slider/cylindrical/planar -> one JointDirections
+        * pin_slot                 -> (slideDirection, rotationDirection)
+        * ball                     -> (pitchDirection, yawDirection); Fusion
+          rejects a pitch that is parallel to the joint axis
+          (`Invalid parameter pitchDirection`), so the perpendicular axis is
+          passed first regardless of which one the caller named as `axis`.
+        """
+        setter_name, direction_count = self._JOINT_MOTION_SETTERS[joint_type]
+        setter = getattr(inp, setter_name)
+
+        if not direction_count:
+            setter()
+            return
+
+        primary = self._joint_direction(axis)
+        if direction_count == 1:
+            setter(primary)
+            return
+
+        secondary = self._joint_direction(second_axis or self._perpendicular(axis))
+        if joint_type in self._JOINT_REVERSED_DIRECTION_ARGUMENTS:
+            setter(secondary, primary)
+        else:
+            setter(primary, secondary)
 
     def _joint_direction(self, axis: str):
         attr = self._JOINT_AXES.get((axis or "").lower())
@@ -2699,13 +2726,11 @@ class CommandHandler:
         """
         root = self._root()
 
-        motion = self._JOINT_MOTION_SETTERS.get(joint_type)
-        if motion is None:
+        if joint_type not in self._JOINT_MOTION_SETTERS:
             raise RuntimeError(
                 f"Unknown joint type: {joint_type}. "
                 f"Use one of {sorted(self._JOINT_MOTION_SETTERS)}"
             )
-        setter_name, direction_count = motion
 
         occ1 = self._occurrence_by_component(component_one)
         occ2 = self._occurrence_by_component(component_two)
@@ -2745,18 +2770,7 @@ class CommandHandler:
 
         # Honour joint_type; previously every request produced a rigid joint
         # because no motion was ever set.
-        setter = getattr(inp, setter_name)
-        if direction_count:
-            primary = self._joint_direction(axis)
-            if direction_count == 1:
-                setter(primary)
-            else:
-                setter(
-                    primary,
-                    self._joint_direction(second_axis or self._perpendicular(axis)),
-                )
-        else:
-            setter()
+        self._apply_joint_motion(inp, joint_type, axis, second_axis)
 
         joint = as_built.add(inp)
         return {

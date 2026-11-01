@@ -41,7 +41,16 @@ def _class_assign(attr: str):
             if not isinstance(stmt, ast.Assign):
                 continue
             if any(isinstance(t, ast.Name) and t.id == attr for t in stmt.targets):
-                return ast.literal_eval(stmt.value)
+                value = stmt.value
+                # frozenset({...}) / set({...}) -> unwrap the set literal
+                if (
+                    isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Name)
+                    and value.func.id in {"frozenset", "set"}
+                    and value.args
+                ):
+                    return ast.literal_eval(value.args[0])
+                return ast.literal_eval(value)
     raise AssertionError(f"CommandHandler.{attr} not found in {HANDLER}")
 
 
@@ -245,3 +254,27 @@ def test_add_joint_reports_whether_it_moved_the_components():
         "add_joint must report the component displacement a snap causes "
         f"(returned keys: {sorted(keys)})"
     )
+
+
+def test_ball_joint_reverses_its_direction_arguments():
+    """Fusion's ball joint takes (pitchDirection, yawDirection).
+
+    Passing the caller's axis first raises ``Invalid parameter pitchDirection``
+    whenever that axis is parallel to the joint axis - verified on 2705:
+    (X, Z) failed, (Z, X) produced a BallJointMotion.
+    """
+    reversed_types = _class_assign("_JOINT_REVERSED_DIRECTION_ARGUMENTS")
+    assert set(reversed_types) == {"ball"}, (
+        f"only ball is known to need reversed direction arguments, got {reversed_types}"
+    )
+
+    for method_name in ("add_joint", "create_as_built_joint"):
+        node = _method(method_name)
+        uses_helper = any(
+            isinstance(n, ast.Attribute) and n.attr == "_apply_joint_motion"
+            for n in ast.walk(node)
+        )
+        assert uses_helper, (
+            f"{method_name} must set motion through _apply_joint_motion so the "
+            "ball direction order (and future quirks) stay in one place"
+        )

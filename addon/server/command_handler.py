@@ -2611,6 +2611,15 @@ class CommandHandler:
             for face in faces
         ]
 
+        before = {
+            occ.name: (
+                occ.transform.translation.x,
+                occ.transform.translation.y,
+                occ.transform.translation.z,
+            )
+            for occ in (occ1, occ2)
+        }
+
         inp = joints.createInput(geometries[0], geometries[1])
 
         # Set the requested motion explicitly. Previously only "rigid" was
@@ -2627,11 +2636,28 @@ class CommandHandler:
             setter()
 
         joint = joints.add(inp)
+        self._design().computeAll()
+
+        # A Fusion joint *moves* components so the two joint origins become
+        # coincident. That silently rearranges the design when the caller only
+        # wanted a constraint, so report the displacement instead of hiding it.
+        moved = {}
+        for occ in (occ1, occ2):
+            delta = [
+                round(occ.transform.translation.x - before[occ.name][0], 6),
+                round(occ.transform.translation.y - before[occ.name][1], 6),
+                round(occ.transform.translation.z - before[occ.name][2], 6),
+            ]
+            if any(abs(v) > 1e-6 for v in delta):
+                moved[occ.name] = delta
+
         return {
             "created": True,
             "joint_name": joint.name,
             "joint_type": joint_type,
             "motion": joint.jointMotion.objectType.split("::")[-1],
+            "snapped": bool(moved),
+            "moved_components": moved,
         }
 
     def _joint_direction(self, axis: str):
@@ -2647,24 +2673,99 @@ class CommandHandler:
         return "z" if (axis or "x").lower() != "z" else "x"
 
     def create_as_built_joint(
-        self, component_one: str, component_two: str, joint_type: str = "rigid"
+        self,
+        component_one: str,
+        component_two: str,
+        joint_type: str = "rigid",
+        body_one: str = None,
+        face_one: int = None,
+        body_two: str = None,
+        face_two: int = None,
+        axis: str = "x",
+        second_axis: str = None,
+        quadrant: str = "middle",
+        key_point: str = "end",
     ):
+        """Create a joint that keeps the components where they are.
+
+        Unlike ``add_joint``, this does not move anything: an as-built joint
+        records the current pose instead of enforcing a new one, which is what
+        you want when the parts are already positioned correctly (for example
+        the two halves of a hinge lined up in a design).
+
+        Fusion refuses a non-rigid as-built joint without geometry
+        (``Geometry should not be null if joint motion is not rigid``), so a
+        face pair is required for every joint_type except ``rigid``.
+        """
         root = self._root()
 
-        occ1 = occ2 = None
-        for occ in root.allOccurrences:
-            if occ.component.name == component_one:
-                occ1 = occ
-            if occ.component.name == component_two:
-                occ2 = occ
+        motion = self._JOINT_MOTION_SETTERS.get(joint_type)
+        if motion is None:
+            raise RuntimeError(
+                f"Unknown joint type: {joint_type}. "
+                f"Use one of {sorted(self._JOINT_MOTION_SETTERS)}"
+            )
+        setter_name, direction_count = motion
 
+        occ1 = self._occurrence_by_component(component_one)
+        occ2 = self._occurrence_by_component(component_two)
         if not occ1 or not occ2:
             raise RuntimeError("One or both components not found")
+        if occ1 == occ2:
+            raise RuntimeError("component_one and component_two must differ")
+
+        geometry = None
+        if joint_type != "rigid":
+            if face_one is None or face_two is None:
+                raise RuntimeError(
+                    f"A {joint_type} as-built joint needs geometry: pass "
+                    "face_one/face_two (and body_one/body_two when a component "
+                    "holds more than one body). Only 'rigid' works without it."
+                )
+            face = self._joint_face(occ1, body_one, face_one, "body_one")
+
+            # ``asBuiltJoints.createInput`` takes a single geometry, so face_two
+            # cannot be used to build the joint. It is still resolved, so an
+            # unresolvable body_two/face_two is reported rather than ignored.
+            self._joint_face(occ2, body_two, face_two, "body_two")
+            quadrant_attr = self._JOINT_QUADRANTS.get(quadrant)
+            key_point_attr = self._JOINT_KEY_POINTS.get(key_point)
+            if quadrant_attr is None or key_point_attr is None:
+                raise RuntimeError(
+                    f"Unknown quadrant/key_point: {quadrant}/{key_point}"
+                )
+            geometry = adsk.fusion.JointGeometry.createByCylinderOrConeFace(
+                face,
+                getattr(adsk.fusion.JointQuadrantAngleTypes, quadrant_attr),
+                getattr(adsk.fusion.JointKeyPointTypes, key_point_attr),
+            )
 
         as_built = root.asBuiltJoints
-        inp = as_built.createInput(occ1, occ2, None)
-        as_built.add(inp)
-        return {"created": True, "joint_type": joint_type}
+        inp = as_built.createInput(occ1, occ2, geometry)
+
+        # Honour joint_type; previously every request produced a rigid joint
+        # because no motion was ever set.
+        setter = getattr(inp, setter_name)
+        if direction_count:
+            primary = self._joint_direction(axis)
+            if direction_count == 1:
+                setter(primary)
+            else:
+                setter(
+                    primary,
+                    self._joint_direction(second_axis or self._perpendicular(axis)),
+                )
+        else:
+            setter()
+
+        joint = as_built.add(inp)
+        return {
+            "created": True,
+            "joint_name": joint.name,
+            "joint_type": joint_type,
+            "motion": joint.jointMotion.objectType.split("::")[-1],
+            "kept_current_positions": True,
+        }
 
     def create_rigid_group(self, component_names: list, include_children: bool = True):
         root = self._root()

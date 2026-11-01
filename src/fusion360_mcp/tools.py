@@ -547,7 +547,9 @@ TOOLS: list[dict] = [
             "built from component origins, because a bare point carries no "
             "component association. Pass a cylindrical face on each side "
             "(see get_object_info for the face indices) - for a hinge that is "
-            "the knuckle bore on each leaf."
+            "the knuckle bore on each leaf. NOTE: creating a joint MOVES the "
+            "components so the joint geometry becomes coincident - use "
+            "create_as_built_joint when the parts are already positioned."
         ),
         "inputSchema": {
             "type": "object",
@@ -1666,8 +1668,12 @@ TOOLS: list[dict] = [
         "name": "create_as_built_joint",
         "title": "Create As-Built Joint",
         "description": (
-            "Create a joint from components' current positions "
-            "(easier than geometric joints)"
+            "Create a joint that keeps both components exactly where they are, "
+            "capturing the current pose instead of enforcing a new one. Use this "
+            "when the parts are already positioned correctly; add_joint instead "
+            "moves components to make the joint geometry coincident. "
+            "Fusion needs a face pair (face_one/face_two) for every joint type "
+            "except rigid."
         ),
         "inputSchema": {
             "type": "object",
@@ -1691,6 +1697,65 @@ TOOLS: list[dict] = [
                         "ball",
                     ],
                     "default": "rigid",
+                },
+                "body_one": {
+                    "type": "string",
+                    "description": (
+                        "Body inside component_one carrying the joint geometry. "
+                        "Omit when the component holds exactly one body."
+                    ),
+                },
+                "face_one": {
+                    "type": "integer",
+                    "description": (
+                        "Face index on that body (cylindrical faces work best)."
+                    ),
+                },
+                "body_two": {
+                    "type": "string",
+                    "description": (
+                        "Body inside component_two carrying the joint geometry. "
+                        "Omit when the component holds exactly one body."
+                    ),
+                },
+                "face_two": {
+                    "type": "integer",
+                    "description": (
+                        "Face index on that body (cylindrical faces work best)."
+                    ),
+                },
+                "axis": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "default": "x",
+                    "description": (
+                        "Rotation/slide axis for revolute, slider and cylindrical; "
+                        "primary direction for pin_slot, planar and ball."
+                    ),
+                },
+                "second_axis": {
+                    "type": "string",
+                    "enum": ["x", "y", "z"],
+                    "description": (
+                        "Secondary direction for pin_slot and ball. "
+                        "Defaults to an axis perpendicular to `axis`."
+                    ),
+                },
+                "quadrant": {
+                    "type": "string",
+                    "enum": ["start", "quarter", "middle", "third_quarter"],
+                    "default": "middle",
+                    "description": (
+                        "Angular position of the joint origin on a cylindrical face."
+                    ),
+                },
+                "key_point": {
+                    "type": "string",
+                    "enum": ["start", "middle", "center", "end"],
+                    "default": "end",
+                    "description": (
+                        "Axial position of the joint origin on a cylindrical face."
+                    ),
                 },
             },
         },

@@ -171,3 +171,77 @@ def test_direction_and_quadrant_enums_match_the_schema():
 
     key_points = set(_class_assign("_JOINT_KEY_POINTS"))
     assert set(props["key_point"]["enum"]) == key_points
+
+
+# ---------------------------------------------------------------------------
+# create_as_built_joint: the non-snapping variant
+# ---------------------------------------------------------------------------
+
+
+def test_as_built_joint_honours_joint_type():
+    """An as-built joint used to ignore joint_type and always be rigid.
+
+    Fusion keeps the components where they are for as-built joints, which makes
+    this the right tool when a design is already positioned - so a silent
+    downgrade to rigid is exactly the wrong failure. Guard that the method uses
+    the shared motion table rather than hard-coding ``setAsRigidJointMotion``.
+    """
+    node = _method("create_as_built_joint")
+
+    used_table = any(
+        (isinstance(n, ast.Name) and n.id == "_JOINT_MOTION_SETTERS")
+        or (isinstance(n, ast.Attribute) and n.attr == "_JOINT_MOTION_SETTERS")
+        for n in ast.walk(node)
+    )
+    assert used_table, (
+        "create_as_built_joint must resolve motion through _JOINT_MOTION_SETTERS; "
+        "hard-coding a setter means joint_type is ignored"
+    )
+
+    raises = [
+        n for n in ast.walk(node) if isinstance(n, ast.Raise) and n.exc is not None
+    ]
+    assert raises, (
+        "create_as_built_joint must raise when a non-rigid joint is requested "
+        "without joint geometry (Fusion: 'Geometry should not be null if joint "
+        "motion is not rigid')"
+    )
+
+
+def test_as_built_joint_schema_mirrors_add_joint():
+    """Both joint tools take the same geometry arguments."""
+    schema = {t["name"]: t["inputSchema"] for t in TOOLS}
+    add = set(schema["add_joint"]["properties"])
+    built = set(schema["create_as_built_joint"]["properties"])
+
+    assert add == built, (
+        "add_joint and create_as_built_joint accept different arguments, which "
+        f"makes the snapping/non-snapping pair confusing.\n"
+        f"  only in add_joint: {sorted(add - built)}\n"
+        f"  only in create_as_built_joint: {sorted(built - add)}"
+    )
+
+
+def test_add_joint_reports_whether_it_moved_the_components():
+    """A joint snaps components together; that must be reported, not hidden.
+
+    On a real assembly this surfaced as a 32.6 mm displacement between the two
+    halves of a hinge - the joint "worked" and quietly rearranged the design.
+    """
+    node = _method("add_joint")
+    returned = [
+        n.value
+        for n in ast.walk(node)
+        if isinstance(n, ast.Return) and isinstance(n.value, ast.Dict)
+    ]
+    assert returned, "add_joint must return a result dict"
+    keys = {
+        k.value
+        for d in returned
+        for k in d.keys
+        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+    }
+    assert {"snapped", "moved_components"} <= keys, (
+        "add_joint must report the component displacement a snap causes "
+        f"(returned keys: {sorted(keys)})"
+    )

@@ -57,6 +57,8 @@ class RestartTests(unittest.TestCase):
                     "adsk.fusion": adsk.fusion, "restart_fixture": module,
                 }):
                     spec.loader.exec_module(module)
+                    # Fusion loads its add-in package with __package__ unset.
+                    module.__package__ = None
                     module.run(None)
                     self.assertEqual(module._handler.revision, "old")
                     module.stop(None)

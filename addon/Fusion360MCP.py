@@ -43,7 +43,7 @@ def run(context):
             "hints", "hole_geometry", "parameter_units", "document_scope",
             "command_handler", "event_bridge", "socket_server",
         ):
-            full_name = f"{__package__}.server.{name}"
+            full_name = f"{__package__ or __name__}.server.{name}"
             if full_name in sys.modules:
                 importlib.reload(sys.modules[full_name])
             else:

@@ -11,7 +11,9 @@ for cross-machine setups (MCP server on a different host). Only do
 this on a trusted LAN — the socket has no authentication.
 """
 
+import importlib
 import os
+import sys
 import traceback
 
 import adsk.core
@@ -32,6 +34,20 @@ def run(context):
     try:
         _app = adsk.core.Application.get()
         _ui = _app.userInterface
+
+        # Fusion keeps imported submodules after Stop/Run. Reload only our
+        # implementation modules, in dependency order, before constructing
+        # a fresh handler/bridge; updating the add-in never requires closing
+        # the application or any open document.
+        for name in (
+            "hints", "hole_geometry", "parameter_units", "document_scope",
+            "command_handler", "event_bridge", "socket_server",
+        ):
+            full_name = f"{__package__ or __name__}.server.{name}"
+            if full_name in sys.modules:
+                importlib.reload(sys.modules[full_name])
+            else:
+                importlib.import_module(full_name)
 
         # Late imports so the add-in folder is on sys.path
         from .server import LOG_PATH, get_logger

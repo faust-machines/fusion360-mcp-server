@@ -994,6 +994,12 @@ def _default_mock(p: dict) -> dict:
 # ── dispatch table ────────────────────────────────────────────────────
 
 _DISPATCH: dict[str, Any] = {
+    "new_document": lambda p: {
+        "document": "Mock design",
+        "document_id": "mock-only",
+        "parametric": True,
+    },
+    "close_document": lambda p: {"closed": True},
     "ping": _ping,
     "get_scene_info": _get_scene_info,
     "get_object_info": _get_object_info,

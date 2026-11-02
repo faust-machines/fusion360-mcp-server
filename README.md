@@ -123,7 +123,7 @@ Call the `ping` tool from your client. If it returns `{"ok": true, "status": "po
 2. Stop the add-in in Fusion (Shift+S → Add-Ins → Fusion360MCP → Stop)
 3. Delete the add-in folder from Fusion's AddIns directory
 
-## Available Tools (93)
+## Available Tools (95)
 
 > Tools marked **(2026+)** require a recent Fusion build — they use APIs introduced in the January–July 2026 releases and are live-tested on Fusion 2705 (arm64).
 
@@ -304,6 +304,29 @@ uv sync --dev       # install deps
 uv run pytest -v    # run tests (363 tests)
 uv run ruff check   # lint
 ```
+
+## Document-bound automation
+
+`new_document` creates a separate parametric design and returns `document_id`, an
+opaque token for that exact document in the current add-in session. Supply
+`source_f3d` to import an archive into a new document instead. The previously active
+user document is restored without saving or closing it. This also works when no
+design is open.
+
+Pass that `document_id` with each later tool call. The add-in resolves and activates
+the target on Fusion's main thread, uses its Design/CAM references, then restores
+the previous document. Unknown or closed tokens fail without falling back to the
+active tab. Tokens expire when the handler restarts. Names and copied `creationId`
+values are not used as document identities. The client checks the add-in's
+`document_binding: 1` capability before sending bound commands, so an older add-in
+cannot silently ignore the binding. Calls without `document_id` retain their
+existing active-document behavior.
+
+`execute_code` receives bound `design`, `component`, `document`, and `app` context.
+This is contextual isolation, not a Python sandbox: trusted scripts still have
+explicit access to global Autodesk APIs. After exporting any wanted artifacts,
+`close_document` with the token closes only that session-created document without
+saving it; unbound close requests are refused.
 
 ## Notes
 

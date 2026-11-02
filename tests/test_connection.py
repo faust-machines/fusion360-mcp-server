@@ -536,3 +536,37 @@ class TestEndpointChange:
             if mod._connection:
                 mod._connection.disconnect()
             mod._connection = saved
+
+
+class TestDocumentBinding:
+    def test_bound_command_refuses_legacy_addin_before_mutation(self):
+        from unittest.mock import Mock
+
+        conn = Fusion360Connection()
+        conn._sock = Mock()
+        conn._recv_json = Mock(
+            return_value={"status": "success", "result": {"pong": True}}
+        )
+        with pytest.raises(FusionError, match="document binding"):
+            conn.send_command("extrude", {"distance": 1}, document_id="owned")
+        sent = [json.loads(call.args[0]) for call in conn._sock.sendall.call_args_list]
+        assert [item["type"] for item in sent] == ["ping"]
+
+    def test_bound_command_carries_token_outside_tool_parameters(self):
+        from unittest.mock import Mock
+
+        conn = Fusion360Connection()
+        conn._sock = Mock()
+        conn._recv_json = Mock(
+            side_effect=[
+                {"status": "success", "result": {"document_binding": 1}},
+                {"status": "success", "result": {"ok": True}},
+            ]
+        )
+        conn.send_command("extrude", {"distance": 1}, document_id="owned")
+        sent = [json.loads(call.args[0]) for call in conn._sock.sendall.call_args_list]
+        assert sent[1] == {
+            "type": "extrude",
+            "params": {"distance": 1},
+            "document_id": "owned",
+        }

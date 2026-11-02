@@ -40,9 +40,18 @@ def _send(
     port: int = _DEFAULT_PORT,
 ) -> dict:
     """Route a command through either the real TCP connection or mock."""
+    arguments = dict(params or {})
+    has_binding = "document_id" in arguments
+    document_id = arguments.pop("document_id", None)
+    if has_binding and (not isinstance(document_id, str) or not document_id):
+        raise ValueError("document_id must be a nonempty session token")
     if mode == "mock":
-        return mock_command(command_type, params)
+        if document_id is not None:
+            raise FusionError("Mock mode has no bound documents")
+        return mock_command(command_type, arguments)
     conn = get_connection(host=host, port=port)
+    if document_id is not None:
+        return conn.send_command(command_type, arguments, document_id=document_id)
     return conn.send_command(command_type, params)
 
 

@@ -130,6 +130,8 @@ class Fusion360Connection:
         params: dict[str, Any] | None = None,
         retries: int = _MAX_RETRIES,
         timeout: float = _TIMEOUT,
+        *,
+        document_id: str | None = None,
     ) -> dict:
         """Send a JSON command and block until a JSON response arrives.
 
@@ -144,17 +146,27 @@ class Fusion360Connection:
                 "Not connected to Fusion 360.  Make sure the add-in is running."
             )
 
-        payload = (
-            json.dumps(
-                {
-                    "type": command_type,
-                    "params": params or {},
-                }
-            )
-            + "\n"
-        )
+        if document_id is not None:
+            if not isinstance(document_id, str) or not document_id:
+                raise ValueError("document_id must be a nonempty session token")
+            # An older add-in ignores unknown envelope fields. Verify the same
+            # connection supports binding before sending any bound operation.
+            capability = self.send_command("ping", retries=0, timeout=_PING_TIMEOUT)
+            if capability.get("document_binding") != 1:
+                raise FusionError(
+                    "The Fusion add-in does not support document binding; "
+                    "update it first",
+                    error_kind="UNSUPPORTED_CAPABILITY",
+                )
+        envelope = {"type": command_type, "params": params or {}}
+        if document_id is not None:
+            envelope["document_id"] = document_id
+        payload = json.dumps(envelope) + "\n"
 
-        is_mutation = command_type in _MUTATION_COMMANDS
+        is_mutation = command_type in _MUTATION_COMMANDS or command_type in {
+            "new_document",
+            "close_document",
+        }
         try:
             self._sock.sendall(payload.encode("utf-8"))
             self._sock.settimeout(timeout)
@@ -182,7 +194,11 @@ class Fusion360Connection:
                 time.sleep(_RETRY_DELAY)
                 if self.connect():
                     return self.send_command(
-                        command_type, params, retries=retries - 1, timeout=timeout
+                        command_type,
+                        params,
+                        retries=retries - 1,
+                        timeout=timeout,
+                        document_id=document_id,
                     )
             raise ConnectionError(f"Lost connection to Fusion 360: {exc}") from exc
 

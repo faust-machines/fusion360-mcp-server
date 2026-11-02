@@ -24,6 +24,7 @@ from . import get_logger
 from . import hints as _hints
 from . import hole_geometry as _hole_geom
 from . import parameter_units as _param_units
+from .document_scope import BoundApplication, DocumentBindings, DocumentScope
 
 log = get_logger("handler")
 
@@ -34,12 +35,13 @@ class CommandHandler:
     def __init__(self):
         self.app = adsk.core.Application.get()
         self.ui = self.app.userInterface
+        self._bindings = DocumentBindings()
+        self._scope = None
+        self._COMMANDS = None
 
     # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
-
-    _COMMANDS = None  # populated lazily
 
     # Canonical camera presets, (eye_dir, up_vec) in Fusion's Z-up world.
     # Shared by render_view and export_view_sheet.
@@ -113,9 +115,37 @@ class CommandHandler:
     )
 
     def execute_command(self, command: dict) -> dict:
+        previous_scope = self._scope
+        try:
+            if "document_id" in command and (
+                not isinstance(command["document_id"], str)
+                or not command["document_id"]
+            ):
+                raise ValueError("document_id must be a nonempty session token")
+            with DocumentScope(
+                self.app, command.get("document_id"), self._bindings
+            ) as scope:
+                self._scope = scope
+                return self._execute_bound_command(command)
+        except Exception as exc:
+            error_kind, hint_list = _hints.classify(exc)
+            return {
+                "status": "success",
+                "result": {
+                    "ok": False,
+                    "error_kind": error_kind,
+                    "error_message": str(exc) or exc.__class__.__name__,
+                    "hints": hint_list,
+                    "traceback": traceback.format_exc(),
+                },
+            }
+        finally:
+            self._scope = previous_scope
+
+    def _execute_bound_command(self, command: dict) -> dict:
         """Route *command* to the correct handler; return a response dict."""
         if self._COMMANDS is None:
-            self.__class__._COMMANDS = {
+            self._COMMANDS = {
                 # scene / query
                 "get_scene_info": self.get_scene_info,
                 "get_object_info": self.get_object_info,
@@ -221,6 +251,8 @@ class CommandHandler:
                 "cam_post_process": self.cam_post_process,
                 # health
                 "ping": self.ping,
+                "new_document": self.new_document,
+                "close_document": self.close_document,
                 # design type safety
                 "get_design_type": self.get_design_type,
                 "set_design_type": self.set_design_type,
@@ -244,24 +276,10 @@ class CommandHandler:
         is_mutation = cmd_type in self._MUTATION_COMMANDS
         snap_before = self._snapshot() if is_mutation else None
 
-        try:
-            t0 = time.monotonic()
-            result = handler(**params)
-            elapsed = time.monotonic() - t0
-            log.debug("%s completed in %.3fs", cmd_type, elapsed)
-        except Exception as exc:
-            log.error("%s raised: %s", cmd_type, exc)
-            error_kind, hint_list = _hints.classify(exc)
-            return {
-                "status": "success",
-                "result": {
-                    "ok": False,
-                    "error_kind": error_kind,
-                    "error_message": str(exc) or exc.__class__.__name__,
-                    "hints": hint_list,
-                    "traceback": traceback.format_exc(),
-                },
-            }
+        t0 = time.monotonic()
+        result = handler(**params)
+        elapsed = time.monotonic() - t0
+        log.debug("%s completed in %.3fs", cmd_type, elapsed)
 
         if not isinstance(result, dict):
             result = {"value": result}
@@ -278,6 +296,17 @@ class CommandHandler:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _document(self):
+        return (
+            self._scope.document if self._scope is not None else self.app.activeDocument
+        )
+
+    def _do_events(self):
+        adsk.doEvents()
+        # UI events can activate a different tab. Rebind before any global UI API.
+        if self._scope is not None:
+            self._scope.activate()
+
     def _design(self):
         """The active document's Design product.
 
@@ -286,7 +315,7 @@ class CommandHandler:
         CAM product instead of the design, which breaks every handler that
         assumes a fusion.Design.
         """
-        doc = self.app.activeDocument
+        doc = self._document()
         if doc is not None:
             try:
                 design = doc.products.itemByProductType("DesignProductType")
@@ -294,6 +323,8 @@ class CommandHandler:
                     return design
             except Exception:
                 pass
+        if self._scope is not None and self._scope.document_id is not None:
+            raise RuntimeError("The bound document has no Design product")
         d = self.app.activeProduct
         if d is None or not hasattr(d, "rootComponent"):
             raise RuntimeError("No active design")
@@ -1664,7 +1695,7 @@ class CommandHandler:
         cam.isFitView = True
         vp.camera = cam
         vp.refresh()
-        adsk.doEvents()
+        self._do_events()
 
     def export_view_sheet(
         self,
@@ -2089,14 +2120,14 @@ class CommandHandler:
         cmd_def.execute()
 
         # Check if undo silently switched design type (Parametric → Direct)
-        adsk.doEvents()  # let Fusion process the undo
+        self._do_events()  # let Fusion process the undo
         type_after = design.designType
         if type_before != type_after:
             # Undo the undo — redo to restore original state
             redo_def = self.ui.commandDefinitions.itemById("RedoCommand")
             if redo_def:
                 redo_def.execute()
-                adsk.doEvents()
+                self._do_events()
             parametric = adsk.fusion.DesignTypes.ParametricDesignType
             raise RuntimeError(
                 f"Undo aborted: would have changed design type from "
@@ -3089,7 +3120,7 @@ class CommandHandler:
         activate it on demand instead of failing outright.  Note:
         itemByProductType *raises* when the product doesn't exist yet.
         """
-        doc = self.app.activeDocument
+        doc = self._document()
 
         def _find_cam_product():
             try:
@@ -3103,7 +3134,7 @@ class CommandHandler:
             if ws is not None:
                 try:
                     ws.activate()
-                    adsk.doEvents()
+                    self._do_events()
                 except Exception as exc:
                     log.warning("Manufacture workspace activation failed: %s", exc)
                 cam_product = _find_cam_product()
@@ -3464,7 +3495,58 @@ class CommandHandler:
     # ------------------------------------------------------------------
 
     def ping(self):
-        return {"pong": True}
+        return {"pong": True, "document_binding": 1}
+
+    def new_document(self, source_f3d: str = None):
+        """Create a separate parametric document; never open over an existing one."""
+        if self._scope is not None and self._scope.document_id is not None:
+            raise RuntimeError("A bound command cannot create another document")
+        previous = self.app.activeDocument
+        document = None
+        try:
+            if source_f3d is None:
+                document = self.app.documents.add(
+                    adsk.core.DocumentTypes.FusionDesignDocumentType
+                )
+            else:
+                if not os.path.isabs(source_f3d) or not source_f3d.lower().endswith(
+                    ".f3d"
+                ):
+                    raise ValueError("source_f3d must be an absolute F3D file path")
+                manager = self.app.importManager
+                options = manager.createFusionArchiveImportOptions(source_f3d)
+                if options is None:
+                    raise RuntimeError("Could not read the source Fusion archive")
+                document = manager.importToNewDocument(options)
+            if document is None:
+                raise RuntimeError("Fusion did not create a document")
+            design = document.products.itemByProductType("DesignProductType")
+            if design is None:
+                raise RuntimeError("The new document has no Design product")
+            if source_f3d is None:
+                design.designType = adsk.fusion.DesignTypes.ParametricDesignType
+            return {
+                "document_id": self._bindings.add(document),
+                "document": document.name,
+                "parametric": design.designType
+                == adsk.fusion.DesignTypes.ParametricDesignType,
+                "document_binding": 1,
+            }
+        except Exception:
+            if document is not None and document.isValid:
+                document.close(False)
+            raise
+        finally:
+            if previous is not None and previous.isValid:
+                previous.activate()
+
+    def close_document(self):
+        """Close only a document this handler created and the caller bound."""
+        if self._scope is None or self._scope.document_id is None:
+            raise RuntimeError("close_document requires a bound document_id")
+        if not self._scope.document.close(False):
+            raise RuntimeError("Could not close the bound Fusion document")
+        return {"closed": True}
 
     # ------------------------------------------------------------------
     # Design type safety
@@ -3495,7 +3577,7 @@ class CommandHandler:
                     "message": "Already in parametric mode",
                 }
             design.designType = target
-            adsk.doEvents()
+            self._do_events()
             # Verify it actually changed
             if design.designType != target:
                 raise RuntimeError(
@@ -3513,7 +3595,7 @@ class CommandHandler:
                     "message": "Already in direct mode",
                 }
             design.designType = target
-            adsk.doEvents()
+            self._do_events()
             return {"changed": True, "design_type": "direct"}
 
         else:
@@ -3531,7 +3613,12 @@ class CommandHandler:
 
         ns = {
             "adsk": adsk,
-            "app": self.app,
+            "app": (
+                BoundApplication(self.app, self._scope)
+                if self._scope is not None and self._scope.document_id is not None
+                else self.app
+            ),
+            "document": self._document(),
             "ui": self.ui,
             "design": design,
             "component": self._root(),
@@ -3624,7 +3711,7 @@ class CommandHandler:
         is reported in grams; bbox in cm (Fusion's internal unit).
         """
         try:
-            design = self.app.activeProduct
+            design = self._design()
             if design is None or not hasattr(design, "rootComponent"):
                 return None
             root = design.rootComponent
@@ -3783,7 +3870,7 @@ class CommandHandler:
         ``spec`` is ``(eye_dir, up_vec)`` from ``_VIEW_DIRS``.
         """
         eye_dir, up_vec = spec
-        design = self.app.activeProduct
+        design = self._design()
         root = design.rootComponent if design is not None else None
 
         # Target is the model centroid (or origin if no bodies).

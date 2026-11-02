@@ -84,9 +84,12 @@ class EventBridge:
         cmd_type = command.get("type", "?")
 
         # Fast-path: ping never touches Fusion API — answer immediately
-        if cmd_type == "ping":
+        if cmd_type == "ping" and "document_id" not in command:
             log.debug("ping (fast path)")
-            return {"status": "success", "result": {"ok": True, "status": "pong"}}
+            return {
+                "status": "success",
+                "result": {"ok": True, "status": "pong", "document_binding": 1},
+            }
 
         log.debug("submit cmd=%s", cmd_type)
         item = WorkItem(command)
@@ -184,15 +187,14 @@ class EventBridge:
         import importlib
 
         from . import command_handler as ch_mod
+        from . import document_scope as scope_mod
         from . import hints as hints_mod
         from . import hole_geometry as hole_mod
         from . import parameter_units as units_mod
 
-        for mod in (hints_mod, hole_mod, units_mod, ch_mod):
+        for mod in (hints_mod, hole_mod, units_mod, scope_mod, ch_mod):
             importlib.reload(mod)
         self._handler = ch_mod.CommandHandler()
-        # Reset lazy dispatch table so it picks up new commands
-        self._handler.__class__._COMMANDS = None
         log.info("CommandHandler reloaded")
 
     # ------------------------------------------------------------------

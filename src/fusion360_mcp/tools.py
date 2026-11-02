@@ -8,6 +8,41 @@ JSON Schema that the MCP SDK validates before forwarding arguments.
 import mcp.types as types
 
 TOOLS: list[dict] = [
+    {
+        "name": "new_document",
+        "title": "New Document",
+        "description": (
+            'Create a separate design or import an F3D into a new '
+            'document. Returns a session document_id for bound calls; '
+            'restores the previously active document.'
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source_f3d": {
+                    "type": "string",
+                    "description": (
+                        'Absolute F3D path to import into a new document; omit for an '
+                        'empty parametric design.'
+                    ),
+                }
+            },
+        },
+    },
+    {
+        "name": "close_document",
+        "title": "Close Bound Document",
+        "description": (
+            'Close without saving only the exact document created by '
+            'new_document and identified by document_id. Export any '
+            'wanted artifacts first.'
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": ["document_id"],
+        },
+    },
     # ── scene / query ────────────────────────────────────────────────
     {
         "name": "get_scene_info",
@@ -2445,7 +2480,7 @@ _READ_ONLY = {
     "get_design_type",
     "render_view",
 }
-_DESTRUCTIVE = {"delete_all", "delete_parameter"}
+_DESTRUCTIVE = {"delete_all", "delete_parameter", "close_document"}
 _IDEMPOTENT = {
     "ping",
     "get_scene_info",
@@ -2477,6 +2512,19 @@ for _t in TOOLS:
         "destructiveHint": _name in _DESTRUCTIVE,
         "idempotentHint": _name in _IDEMPOTENT,
     }
+
+
+for _tool in TOOLS:
+    if _tool["name"] != "new_document":
+        _tool["inputSchema"]["properties"]["document_id"] = {
+            "type": "string",
+            "minLength": 1,
+            "description": (
+                'Session token returned by new_document. Resolve and execute '
+                'against that exact document; fail if it is closed. Omit for '
+                'legacy active-document behavior.'
+            ),
+        }
 
 
 def get_tool_list() -> list[types.Tool]:
